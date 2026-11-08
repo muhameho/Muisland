@@ -1,0 +1,24 @@
+# Rust build output and locally built app binaries
+/target/
+/*.exe
+/*.pdb
+
+# Reproducible design previews and renderer diagnostics
+/preview/
+/preview-render-error.txt
+
+# Local session data must never enter source control
+/account-*/
+/muisland-settings.bin
+/local-backups/
+/removed-accounts/
+/recovered/
+auth.json
+.env
+.env.*
+!.env.example
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
