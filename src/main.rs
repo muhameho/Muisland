@@ -68,6 +68,7 @@ mod island {
         Preferences,
         Notice(String, String),
         Confirm(Op),
+        Remove(usize, String),
     }
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     enum Action {
@@ -83,6 +84,10 @@ mod island {
         Next,
         Protect,
         Smaller,
+        FloatSmaller,
+        FloatLarger,
+        Remove,
+        RemoveConfirm,
         Larger,
         Circle,
         Motion,
@@ -137,7 +142,7 @@ mod island {
         view: View,
         previous: Option<View>,
         transition: f32,
-        backwards: bool,
+        page_fade: f32,
         reveal: f32,
         hover: Action,
         hover_t: f32,
@@ -354,17 +359,24 @@ mod island {
             View::Details(_) => {
                 add(Action::NameField, 24, 126, 372, 44);
                 add(Action::Back, 24, 410, 120, 42);
-                add(Action::NameSave, 156, 410, 240, 42)
+                add(Action::NameSave, 156, 410, 240, 42);
+                add(Action::Remove, 24, 356, 372, 36);
             }
             View::Preferences => {
                 add(Action::Smaller, 264, 126, 38, 36);
                 add(Action::Larger, 352, 126, 38, 36);
-                add(Action::Circle, 24, 179, 372, 48);
-                add(Action::Motion, 24, 237, 372, 48);
-                add(Action::Rollback, 24, 303, 372, 36);
-                add(Action::Recover, 24, 347, 372, 36);
-                add(Action::Back, 24, 410, 170, 42);
-                add(Action::Quit, 206, 410, 190, 42)
+                add(Action::FloatSmaller, 264, 178, 38, 36);
+                add(Action::FloatLarger, 352, 178, 38, 36);
+                add(Action::Circle, 24, 232, 372, 48);
+                add(Action::Motion, 24, 290, 372, 48);
+                add(Action::Rollback, 24, 350, 372, 36);
+                add(Action::Recover, 24, 394, 372, 36);
+                add(Action::Back, 24, 448, 170, 40);
+                add(Action::Quit, 206, 448, 190, 40);
+            }
+            View::Remove(_, _) => {
+                add(Action::Cancel, 24, 312, 120, 42);
+                add(Action::RemoveConfirm, 156, 312, 240, 42);
             }
             View::Notice(_, _) => add(Action::Back, 24, 410, 372, 42),
             View::Confirm(_) => {
@@ -404,35 +416,76 @@ mod island {
     ) {
         let pressed = s.down.is_some_and(|(_, _, down)| down == a) && s.hover == a;
         let d = if pressed { 1 } else { 0 };
-        let bg = if primary {
-            mix(GREEN, WHITE, hot(s, a) * 0.2)
+        let danger = matches!(a, Action::Remove | Action::RemoveConfirm);
+        let color = if danger {
+            mix(0x00232834, 0x0031374C, hot(s, a))
+        } else if primary {
+            mix(GREEN, WHITE, hot(s, a) * 0.14)
         } else {
-            mix(0x00212823, 0x00384230, hot(s, a))
+            mix(0x00232B26, 0x00364036, hot(s, a))
         };
-        panel(dc, x + d, y + d, w - 2 * d, h - 2 * d, h / 2, bg);
-        let approx = label.chars().count() as i32 * 7;
+        let radius = if w == h {
+            h / 2
+        } else if h <= 36 {
+            10
+        } else {
+            12
+        };
+        panel(dc, x + d, y + d, w - 2 * d, h - 2 * d, radius, color);
+        let size = if w <= 40 { 18 } else { 13 };
+        let font = CreateFontW(
+            -size * 2,
+            0,
+            0,
+            0,
+            600,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            0,
+            0,
+            ANTIALIASED_QUALITY as u32,
+            0,
+            wide("Segoe UI Variable Display").as_ptr(),
+        );
+        let old = SelectObject(dc, font);
+        let chars: Vec<u16> = label.encode_utf16().collect();
+        let mut extent: SIZE = zeroed();
+        GetTextExtentPoint32W(dc, chars.as_ptr(), chars.len() as i32, &mut extent);
+        SelectObject(dc, old);
+        DeleteObject(font);
+        let tx = x + ((w - extent.cx / 2) / 2).max(6);
+        let ty = y + ((h - extent.cy / 2) / 2).max(0);
         text(
             dc,
-            x + ((w - approx) / 2).max(10),
-            y + (h - 16) / 2,
-            13,
+            tx + d,
+            ty + d,
+            size,
             600,
             label,
-            if primary { BG } else { WHITE },
-            w - 20,
+            if danger {
+                0x00B2B9F0
+            } else if primary {
+                BG
+            } else {
+                WHITE
+            },
+            w - 12,
         );
         if s.focus == a {
             panel(
                 dc,
-                x + 16,
-                y + h - 5,
-                w - 32,
+                x + 12,
+                y + h - 4,
+                w - 24,
                 2,
                 1,
-                if primary { BG } else { GREEN },
+                if primary && !danger { BG } else { GREEN },
             );
         }
     }
+
     unsafe fn toggle(dc: Dc, s: &State, a: Action, y: i32, label: &str, value: bool) {
         panel(dc, 24, y, 372, 48, 16, mix(PANEL, 0x002A342E, hot(s, a)));
         text(dc, 38, y + 16, 13, 500, label, WHITE, 280);
@@ -521,6 +574,22 @@ mod island {
                     MUTED,
                     370,
                 );
+                if s.settings.accounts.is_empty() {
+                    panel(dc, 16, 126, 388, 238, 20, PANEL);
+                    panel(dc, 185, 165, 50, 50, 25, 0x0026352D);
+                    mark(dc, 201, 181, 18, GREEN);
+                    text(dc, 49, 239, 21, 600, "Your island starts here.", WHITE, 335);
+                    text(
+                        dc,
+                        36,
+                        276,
+                        12,
+                        400,
+                        "Add an account, then save your Claude sign-in.",
+                        MUTED,
+                        350,
+                    );
+                }
                 for row in 0..2 {
                     let i = s.page * 2 + row;
                     let Some(account) = s.settings.accounts.get(i) else {
@@ -611,7 +680,11 @@ mod island {
                     392,
                     11,
                     400,
-                    &format!("{} / {}", s.page + 1, s.settings.accounts.len().div_ceil(2)),
+                    &if s.settings.accounts.is_empty() {
+                        "No accounts".into()
+                    } else {
+                        format!("{} / {}", s.page + 1, s.settings.accounts.len().div_ceil(2))
+                    },
                     MUTED,
                     100,
                 );
@@ -719,8 +792,19 @@ mod island {
                         365,
                     );
                     if let Some(error) = s.usage_errors.get(*i).filter(|e| !e.is_empty()) {
-                        paragraph(dc, 25, 324, error, 0x009BA7F0);
+                        text(dc, 25, 324, 11, 400, error, 0x009BA7F0, 365);
                     }
+                    button(
+                        dc,
+                        s,
+                        Action::Remove,
+                        24,
+                        356,
+                        372,
+                        36,
+                        "Remove account",
+                        false,
+                    );
                     button(dc, s, Action::Back, 24, 410, 120, 42, "Back", false);
                     button(
                         dc,
@@ -737,25 +821,47 @@ mod island {
             }
             View::Preferences => {
                 text(dc, 24, 78, 24, 600, "Make it yours.", WHITE, 370);
-                text(dc, 25, 109, 12, 400, "Appearance & local data", MUTED, 370);
-                text(dc, 26, 138, 13, 600, "Island size", WHITE, 200);
+                text(
+                    dc,
+                    25,
+                    109,
+                    12,
+                    400,
+                    "Independent sizes · saved on this device",
+                    MUTED,
+                    370,
+                );
+                text(dc, 26, 137, 13, 600, "Menu size", WHITE, 210);
                 button(dc, s, Action::Smaller, 264, 126, 38, 36, "−", false);
                 text(
                     dc,
-                    309,
+                    308,
                     137,
                     12,
                     600,
-                    &format!("{}%", (s.settings.scale * 100.).round() as i32),
+                    &format!("{}%", (s.settings.menu_scale * 100.).round() as i32),
                     WHITE,
-                    45,
+                    44,
                 );
                 button(dc, s, Action::Larger, 352, 126, 38, 36, "+", false);
+                text(dc, 26, 189, 13, 600, "Floating island size", WHITE, 220);
+                button(dc, s, Action::FloatSmaller, 264, 178, 38, 36, "−", false);
+                text(
+                    dc,
+                    308,
+                    189,
+                    12,
+                    600,
+                    &format!("{}%", (s.settings.float_scale * 100.).round() as i32),
+                    WHITE,
+                    44,
+                );
+                button(dc, s, Action::FloatLarger, 352, 178, 38, 36, "+", false);
                 toggle(
                     dc,
                     s,
                     Action::Circle,
-                    179,
+                    232,
                     "Circle with usage ring",
                     s.settings.circle,
                 );
@@ -763,7 +869,7 @@ mod island {
                     dc,
                     s,
                     Action::Motion,
-                    237,
+                    290,
                     "Reduce motion",
                     s.settings.reduced_motion,
                 );
@@ -772,7 +878,7 @@ mod island {
                     s,
                     Action::Rollback,
                     24,
-                    303,
+                    350,
                     372,
                     36,
                     "Restore previous sign-in",
@@ -783,22 +889,38 @@ mod island {
                     s,
                     Action::Recover,
                     24,
-                    347,
+                    394,
                     372,
                     36,
                     "Recover local backup to folder",
                     false,
                 );
-                button(dc, s, Action::Back, 24, 410, 170, 42, "Back", false);
+                button(dc, s, Action::Back, 24, 448, 170, 40, "Back", false);
                 button(
                     dc,
                     s,
                     Action::Quit,
                     206,
-                    410,
+                    448,
                     190,
-                    42,
+                    40,
                     "Quit Muisland",
+                    false,
+                );
+            }
+            View::Remove(_, name) => {
+                text(dc, 24, 89, 24, 600, "Remove this account?", WHITE, 372);
+                paragraph(dc,25,142,&format!("Remove {name} from Muisland? Claude will stay logged in. Your chats and files are unchanged. The saved sign-in is moved to an encrypted local archive."),MUTED);
+                button(dc, s, Action::Cancel, 24, 312, 120, 42, "Cancel", false);
+                button(
+                    dc,
+                    s,
+                    Action::RemoveConfirm,
+                    156,
+                    312,
+                    240,
+                    42,
+                    "Remove account",
                     false,
                 );
             }
@@ -987,25 +1109,20 @@ mod island {
                 if let Some(previous) = &s.previous {
                     let saved = SaveDC(source.dc);
                     IntersectClipRect(source.dc, 0, 58 * 2, lw * 2, lh * 2);
-                    SetViewportOrgEx(
-                        source.dc,
-                        (-motion * 26. * if s.backwards { -1. } else { 1. }) as i32 * 2,
-                        0,
-                        null_mut(),
-                    );
+                    SetViewportOrgEx(source.dc, 0, 0, null_mut());
                     draw_view(source.dc, s, previous);
                     RestoreDC(source.dc, saved);
                 }
                 let saved = SaveDC(layer.dc);
-                SetViewportOrgEx(
-                    layer.dc,
-                    ((1. - motion) * 26. * if s.backwards { -1. } else { 1. }) as i32 * 2,
-                    ((1. - s.reveal) * 12.) as i32 * 2,
-                    null_mut(),
-                );
+                SetViewportOrgEx(layer.dc, 0, ((1. - s.reveal) * 12.) as i32 * 2, null_mut());
                 draw_view(layer.dc, s, &s.view);
                 RestoreDC(layer.dc, saved);
-                let alpha = (motion * s.reveal * 255.).clamp(0., 255.) as u8;
+                let page_opacity = if matches!(s.view, View::Home) {
+                    1. - (1. - s.page_fade).powi(2)
+                } else {
+                    1.
+                };
+                let alpha = (motion * s.reveal * page_opacity * 255.).clamp(0., 255.) as u8;
                 AlphaBlend(
                     source.dc,
                     0,
@@ -1143,6 +1260,7 @@ mod island {
             "preferences",
             "already-logged-in",
             "account-name",
+            "remove-account",
             "circle",
             "circle-hover",
             "three-accounts",
@@ -1160,6 +1278,7 @@ mod island {
             s.reveal = 1.;
             match name{
                 "preferences"=>s.view=View::Preferences,
+                "remove-account"=>s.view=View::Remove(0,"Personal".into()),
                 "account-name"=>{s.view=View::Details(0);s.edit="حساب الشغل".encode_utf16().collect();s.caret=s.edit.len();s.edit_focus=true;s.selected=true;},
                 "already-logged-in"=>s.view=View::Notice("Already logged in".into(),"Personal is the account currently logged into Claude. No switch was needed and Claude was left untouched.".into()),
                 "circle"=>{s.open=false;s.settings.circle=true;s.w=CIRCLE;s.h=CIRCLE;},
@@ -1209,11 +1328,10 @@ mod island {
             }
         }
     }
-    fn navigate(s: &mut State, next: View, backwards: bool) {
+    fn navigate(s: &mut State, next: View, _backwards: bool) {
         s.previous = Some(s.view.clone());
         s.view = next;
         s.transition = if s.settings.reduced_motion { 1. } else { 0. };
-        s.backwards = backwards;
         s.edit_focus = false;
         s.focus = Action::None;
         s.open = true;
@@ -1230,16 +1348,16 @@ mod island {
                 if s.preview {
                     true
                 } else {
-                    profiles::saved(i + 1)
+                    profiles::saved(s.settings.accounts[i].slot)
                 }
             })
             .collect();
         s.identities = (0..s.settings.accounts.len())
             .map(|i| {
                 if s.preview {
-                    Some(format!("preview-{i}"))
+                    Some(format!("preview-{}", s.settings.accounts[i].slot))
                 } else {
-                    profiles::account_identity(i + 1).ok()
+                    profiles::account_identity(s.settings.accounts[i].slot).ok()
                 }
             })
             .collect();
@@ -1256,25 +1374,32 @@ mod island {
         if fetch {
             s.quota_next = now + 300.;
         }
-        let slots = s.identities.clone();
+        let slots = s
+            .identities
+            .iter()
+            .cloned()
+            .zip(s.settings.accounts.iter().map(|a| a.slot))
+            .collect::<Vec<_>>();
         let generation = s.generation;
         let preview = s.preview;
         let (tx, rx) = mpsc::channel();
         s.sync = Some(rx);
         std::thread::spawn(move || {
             let current = if preview {
-                Some("preview-0".into())
+                Some("preview-1".into())
             } else {
                 usage::current_account_identity().ok()
             };
-            let active = current
-                .as_ref()
-                .and_then(|id| slots.iter().position(|s| s.as_ref() == Some(id)));
+            let active = current.as_ref().and_then(|id| {
+                slots
+                    .iter()
+                    .position(|(identity, _)| identity.as_ref() == Some(id))
+            });
             let mut samples = Vec::new();
             if fetch && !preview {
-                for (i, id) in slots.into_iter().enumerate() {
+                for (id, slot) in slots {
                     if let Some(id) = id {
-                        samples.push((i, id, usage::fetch(i + 1).map_err(|e| e.to_string())));
+                        samples.push((slot, id, usage::fetch(slot).map_err(|e| e.to_string())));
                     }
                 }
             }
@@ -1295,6 +1420,10 @@ mod island {
         let preview = s.preview;
         let active = s.active;
         let protect = s.settings.protect_local;
+        let slot = match op {
+            Op::Save(i) | Op::Switch(i) => s.settings.accounts[i].slot,
+            _ => 0,
+        };
         let (tx, rx) = mpsc::channel();
         s.worker = Some(rx);
         s.pending = Some(op);
@@ -1311,7 +1440,7 @@ mod island {
             let result = (|| -> Result<Outcome, String> {
                 if let Op::Switch(i) = op {
                     if (preview && active == Some(i))
-                        || (!preview && profiles::is_current(i + 1).unwrap_or(false))
+                        || (!preview && profiles::is_current(slot).unwrap_or(false))
                     {
                         return Ok(Outcome::Already(i));
                     }
@@ -1332,12 +1461,12 @@ mod island {
                     profiles::close_claude_for_save().map_err(|e| e.to_string())?;
                 }
                 match op {
-                    Op::Save(i) => {
-                        profiles::capture(i + 1).map_err(|e| e.to_string())?;
+                    Op::Save(_) => {
+                        profiles::capture(slot).map_err(|e| e.to_string())?;
                         Ok(Outcome::Done(op, "Account saved".into()))
                     }
-                    Op::Switch(i) => {
-                        profiles::switch(i + 1, protect).map_err(|e| e.to_string())?;
+                    Op::Switch(_) => {
+                        profiles::switch(slot, protect).map_err(|e| e.to_string())?;
                         profiles::open_claude();
                         Ok(Outcome::Done(op, "Switched successfully".into()))
                     }
@@ -1376,6 +1505,74 @@ mod island {
             }
         }
     }
+    fn remove_account(s: &mut State, index: usize) {
+        if s.worker.is_some() {
+            status(
+                s,
+                "Wait for the current action before removing an account",
+                false,
+            );
+            return;
+        }
+        if index >= s.settings.accounts.len() {
+            return;
+        }
+        let slot = s.settings.accounts[index].slot;
+        let old = s.settings.clone();
+        let active_slot = s
+            .active
+            .and_then(|i| s.settings.accounts.get(i))
+            .map(|a| a.slot);
+        let archive = if s.preview {
+            None
+        } else {
+            match profiles::archive_account(slot) {
+                Ok(path) => path,
+                Err(e) => {
+                    notice(s, "Could not remove account", e.to_string(), true);
+                    return;
+                }
+            }
+        };
+        s.settings.accounts.remove(index);
+        if !s.preview && s.settings.save().is_err() {
+            s.settings = old;
+            if let Some(path) = archive {
+                let _ = profiles::restore_archived_account(slot, &path);
+            }
+            notice(
+                s,
+                "Could not remove account",
+                "Preferences could not be saved. Your account entry has been kept.",
+                true,
+            );
+            return;
+        }
+        if index < s.usage_errors.len() {
+            s.usage_errors.remove(index);
+        }
+        s.generation += 1;
+        s.sync = None;
+        s.sync_next = 0.;
+        s.quota_next = 0.;
+        refresh_slots(s);
+        s.active =
+            active_slot.and_then(|slot| s.settings.accounts.iter().position(|a| a.slot == slot));
+        s.page = s
+            .page
+            .min(s.settings.accounts.len().div_ceil(2).saturating_sub(1));
+        navigate(s, View::Home, true);
+        status(s, "Account removed from Muisland", false);
+    }
+    fn change_page(s: &mut State, next: usize) {
+        s.page = next;
+        s.previous = None;
+        s.transition = 1.;
+        s.page_fade = if s.settings.reduced_motion { 1. } else { 0.2 };
+        s.view = View::Home;
+        s.edit_focus = false;
+        s.focus = Action::None;
+    }
     unsafe fn activate(hwnd: HWND, s: &mut State, a: Action) {
         match a {
             Action::None => {}
@@ -1404,6 +1601,25 @@ mod island {
                 s.selected = true;
             }
             Action::NameSave => name_save(s),
+            Action::Remove => {
+                if let View::Details(i) = s.view {
+                    if s.worker.is_some() {
+                        status(s, "Wait for the current action", false);
+                    } else {
+                        navigate(
+                            s,
+                            View::Remove(i, s.settings.accounts[i].name.clone()),
+                            false,
+                        );
+                        s.focus = Action::Cancel;
+                    }
+                }
+            }
+            Action::RemoveConfirm => {
+                if let View::Remove(i, _) = s.view {
+                    remove_account(s, i);
+                }
+            }
             Action::Switch(i) => begin(s, Op::Switch(i), false),
             Action::Save(i) => begin(s, Op::Save(i), false),
             Action::Confirm => {
@@ -1444,13 +1660,13 @@ mod island {
                 }
             }
             Action::Prev => {
-                s.page = s.page.saturating_sub(1);
-                navigate(s, View::Home, true)
+                if s.page > 0 {
+                    change_page(s, s.page - 1);
+                }
             }
             Action::Next => {
                 if (s.page + 1) * 2 < s.settings.accounts.len() {
-                    s.page += 1;
-                    navigate(s, View::Home, false)
+                    change_page(s, s.page + 1);
                 }
             }
             Action::Protect => {
@@ -1458,11 +1674,19 @@ mod island {
                 persist(s)
             }
             Action::Smaller => {
-                s.settings.scale = (s.settings.scale - 0.1).max(0.75);
+                s.settings.menu_scale = (s.settings.menu_scale - 0.1).max(0.75);
                 persist(s)
             }
             Action::Larger => {
-                s.settings.scale = (s.settings.scale + 0.1).min(1.6);
+                s.settings.menu_scale = (s.settings.menu_scale + 0.1).min(1.6);
+                persist(s)
+            }
+            Action::FloatSmaller => {
+                s.settings.float_scale = (s.settings.float_scale - 0.1).max(0.6);
+                persist(s)
+            }
+            Action::FloatLarger => {
+                s.settings.float_scale = (s.settings.float_scale + 0.1).min(1.8);
                 persist(s)
             }
             Action::Circle => {
@@ -1605,12 +1829,23 @@ mod island {
                 } else {
                     (PILL_W, PILL_H)
                 };
+                let target_scale = if s.open {
+                    s.settings.menu_scale
+                } else {
+                    s.settings.float_scale
+                };
+                let old_page_fade = s.page_fade;
+                s.page_fade = if s.settings.reduced_motion {
+                    1.
+                } else {
+                    (s.page_fade + dt * 10.).min(1.)
+                };
                 if s.settings.reduced_motion {
                     s.w = tw;
                     s.h = th;
                     s.vw = 0.;
                     s.vh = 0.;
-                    s.scale = s.settings.scale;
+                    s.scale = target_scale;
                     s.reveal = if s.open { 1. } else { 0. };
                     s.transition = 1.;
                 } else {
@@ -1630,9 +1865,9 @@ mod island {
                         s.h = th;
                         s.vh = 0.;
                     }
-                    s.scale += (s.settings.scale - s.scale) * (dt * 14.).min(1.);
-                    if (s.scale - s.settings.scale).abs() < 0.001 {
-                        s.scale = s.settings.scale;
+                    s.scale += (target_scale - s.scale) * (dt * 14.).min(1.);
+                    if (s.scale - target_scale).abs() < 0.001 {
+                        s.scale = target_scale;
                     }
                     let reveal = if s.open {
                         ((s.h - 58.) / (EH - 58.) * 1.35 - 0.25).clamp(0., 1.)
@@ -1643,7 +1878,7 @@ mod island {
                     if (reveal - s.reveal).abs() < 0.002 {
                         s.reveal = reveal;
                     }
-                    s.transition = (s.transition + dt * 4.).min(1.);
+                    s.transition = (s.transition + dt * 7.).min(1.);
                 }
                 if s.transition >= 1. {
                     s.previous = None;
@@ -1657,14 +1892,18 @@ mod island {
                 if s.hover_t > 0.998 {
                     s.hover_t = 1.;
                 }
-                let mut changed = false;
+                let mut changed = old_page_fade != s.page_fade;
                 if let Some(result) = s.sync.as_ref().and_then(|r| r.try_recv().ok()) {
                     s.sync = None;
                     if result.generation == s.generation {
                         s.active = result.active;
                     }
                     let mut measurements = false;
-                    for (i, id, result) in result.samples {
+                    for (slot, id, result) in result.samples {
+                        let Some(i) = s.settings.accounts.iter().position(|a| a.slot == slot)
+                        else {
+                            continue;
+                        };
                         if s.identities.get(i).and_then(|i| i.as_ref()) != Some(&id) {
                             continue;
                         }
@@ -1866,7 +2105,7 @@ mod island {
                     }
                 } else if (key == 0x0D || key == 0x20) && !s.edit_focus {
                     let a = if s.focus == Action::None {
-                        if matches!(s.view, View::Confirm(_)) {
+                        if matches!(s.view, View::Confirm(_) | View::Remove(_, _)) {
                             Action::Cancel
                         } else {
                             Action::Toggle
@@ -1908,7 +2147,11 @@ mod island {
             }
         }
         let circle = settings.circle;
-        let scale = settings.scale;
+        let scale = if preview {
+            settings.menu_scale
+        } else {
+            settings.float_scale
+        };
         let mut s = State {
             settings,
             saved: Vec::new(),
@@ -1929,7 +2172,7 @@ mod island {
             view: View::Home,
             previous: None,
             transition: 1.,
-            backwards: false,
+            page_fade: 1.,
             reveal: 0.,
             hover: Action::None,
             hover_t: 0.,
@@ -2056,6 +2299,54 @@ mod island {
                 255
             );
             assert!(bytes.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255));
+        }
+        #[test]
+        fn remove_middle_account_keeps_remaining_slot_ids() {
+            let mut s = initial(true, 0., 0);
+            s.settings.add_account();
+            refresh_slots(&mut s);
+            remove_account(&mut s, 1);
+            assert_eq!(
+                s.settings
+                    .accounts
+                    .iter()
+                    .map(|a| a.slot)
+                    .collect::<Vec<_>>(),
+                vec![1, 3]
+            );
+            s.settings.add_account();
+            assert_eq!(s.settings.accounts[2].slot, 2);
+        }
+        #[test]
+        fn removing_last_account_leaves_add_available() {
+            let mut s = initial(true, 0., 0);
+            remove_account(&mut s, 1);
+            remove_account(&mut s, 0);
+            s.reveal = 1.;
+            s.transition = 1.;
+            assert!(s.settings.accounts.is_empty());
+            assert!(s.active.is_none());
+            assert_eq!(s.page, 0);
+            assert!(buttons(&s).iter().any(|b| b.action == Action::Add));
+        }
+        #[test]
+        fn preference_size_controls_are_independent() {
+            let mut s = initial(true, 0., 0);
+            s.view = View::Preferences;
+            s.reveal = 1.;
+            s.transition = 1.;
+            assert_eq!(hit(&s, 371, 144), Action::Larger);
+            assert_eq!(hit(&s, 371, 196), Action::FloatLarger);
+            s.settings.menu_scale = 1.4;
+            assert_eq!(s.settings.float_scale, 1.0);
+        }
+        #[test]
+        fn page_navigation_uses_only_the_short_fade() {
+            let mut s = initial(true, 0., 0);
+            change_page(&mut s, 1);
+            assert_eq!(s.transition, 1.);
+            assert!(s.previous.is_none());
+            assert!(s.page_fade < 1.);
         }
         #[test]
         fn selecting_current_account_never_requests_a_close_or_switch() {

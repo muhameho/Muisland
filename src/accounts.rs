@@ -14,6 +14,7 @@ pub fn now() -> u64 {
 }
 #[derive(Clone)]
 pub struct Account {
+    pub slot: usize,
     pub name: String,
     pub usage: Option<Usage>,
 }
@@ -21,7 +22,8 @@ pub struct Account {
 pub struct Settings {
     pub accounts: Vec<Account>,
     pub protect_local: bool,
-    pub scale: f32,
+    pub menu_scale: f32,
+    pub float_scale: f32,
     pub circle: bool,
     pub reduced_motion: bool,
 }
@@ -30,12 +32,14 @@ impl Default for Settings {
         Self {
             accounts: (0..2)
                 .map(|i| Account {
+                    slot: i + 1,
                     name: format!("Account {}", i + 1),
                     usage: None,
                 })
                 .collect(),
             protect_local: false,
-            scale: 1.0,
+            menu_scale: 1.0,
+            float_scale: 1.0,
             circle: false,
             reduced_motion: false,
         }
@@ -53,28 +57,40 @@ impl Settings {
     }
     fn from_value(v: &Value) -> Self {
         let mut result = Self::default();
-        let count = v["accounts"]
-            .as_array()
-            .map(|a| a.len())
-            .unwrap_or(2)
-            .clamp(2, MAX_ACCOUNTS);
-        while result.accounts.len() < count {
-            result.add_account();
-        }
-        for i in 0..count {
-            if let Some(name) = v["accounts"][i]["name"].as_str() {
-                if let Ok(name) = valid_name(name) {
-                    result.accounts[i].name = name;
-                }
+        if let Some(rows) = v["accounts"].as_array() {
+            result.accounts.clear();
+            for row in rows.iter().take(MAX_ACCOUNTS) {
+                let preferred = row["slot"].as_u64().map(|n| n as usize).filter(|n| {
+                    (1..=MAX_ACCOUNTS).contains(n) && !result.accounts.iter().any(|a| a.slot == *n)
+                });
+                let slot = preferred.unwrap_or_else(|| {
+                    (1..=MAX_ACCOUNTS)
+                        .find(|n| !result.accounts.iter().any(|a| a.slot == *n))
+                        .unwrap()
+                });
+                let name = row["name"]
+                    .as_str()
+                    .and_then(|n| valid_name(n).ok())
+                    .unwrap_or_else(|| format!("Account {}", result.accounts.len() + 1));
+                result.accounts.push(Account {
+                    slot,
+                    name,
+                    usage: Usage::from_cache(&row["usage"]),
+                });
             }
-            result.accounts[i].usage = Usage::from_cache(&v["accounts"][i]["usage"]);
         }
         result.protect_local = v["protect_local"].as_bool().unwrap_or(false);
-        result.scale = v["scale"]
+        let legacy = v["scale"].as_f64().filter(|n| n.is_finite()).unwrap_or(1.0);
+        result.menu_scale = v["menu_scale"]
             .as_f64()
             .filter(|n| n.is_finite())
-            .unwrap_or(1.0)
+            .unwrap_or(legacy)
             .clamp(0.75, 1.6) as f32;
+        result.float_scale = v["float_scale"]
+            .as_f64()
+            .filter(|n| n.is_finite())
+            .unwrap_or(legacy)
+            .clamp(0.60, 1.8) as f32;
         result.circle = v["circle"].as_bool().unwrap_or(false);
         result.reduced_motion = v["reduced_motion"].as_bool().unwrap_or(false);
         result
@@ -84,7 +100,9 @@ impl Settings {
             return None;
         }
         let i = self.accounts.len();
+        let slot = (1..=MAX_ACCOUNTS).find(|n| !self.accounts.iter().any(|a| a.slot == *n))?;
         self.accounts.push(Account {
+            slot,
             name: format!("Account {}", i + 1),
             usage: None,
         });
@@ -94,9 +112,9 @@ impl Settings {
         let accounts: Vec<Value> = self
             .accounts
             .iter()
-            .map(|a| json!({"name": a.name, "usage": a.usage.as_ref().map(Usage::to_cache)}))
+            .map(|a| json!({"slot":a.slot,"name": a.name, "usage": a.usage.as_ref().map(Usage::to_cache)}))
             .collect();
-        let data = serde_json::to_vec(&json!({"version":1,"accounts":accounts,"protect_local":self.protect_local,"scale":self.scale,"circle":self.circle,"reduced_motion":self.reduced_motion})).map_err(io::Error::other)?;
+        let data = serde_json::to_vec(&json!({"version":1,"accounts":accounts,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})).map_err(io::Error::other)?;
         profiles::write_atomic(
             &profiles::base()?.join("muisland-settings.bin"),
             &profiles::dpapi(&data, true)?,
@@ -131,7 +149,7 @@ mod tests {
         );
         assert_eq!(settings.accounts[0].name, "شغل");
         assert_eq!(settings.accounts[1].name, "Account 2");
-        assert_eq!(settings.scale, 1.0);
+        assert_eq!(settings.menu_scale, 1.0);
         assert!(!settings.circle);
         assert!(!settings.protect_local);
         assert!(settings.accounts[0].usage.is_none());
@@ -142,10 +160,27 @@ mod tests {
         let mut settings = Settings::from_value(&v);
         assert_eq!(settings.accounts.len(), 4);
         assert_eq!(settings.accounts[3].name, "Four");
-        assert_eq!(settings.scale, 1.6);
+        assert_eq!(settings.menu_scale, 1.6);
+        assert_eq!(settings.float_scale, 1.8);
         assert!(settings.circle);
         assert_eq!(settings.add_account(), Some(4));
         assert_eq!(settings.accounts[4].name, "Account 5");
+    }
+    #[test]
+    fn removal_keeps_other_storage_slots_and_empty_lists_stay_empty() {
+        let mut settings = Settings::from_value(
+            &json!({"accounts":[{"slot":1,"name":"A"},{"slot":3,"name":"C"}],"menu_scale":1.4,"float_scale":0.7}),
+        );
+        settings.accounts.remove(0);
+        assert_eq!(settings.accounts[0].slot, 3);
+        settings.add_account();
+        assert_eq!(settings.accounts[0].slot, 3);
+        assert_eq!(settings.accounts[1].slot, 1);
+        assert_eq!(settings.menu_scale, 1.4);
+        assert_eq!(settings.float_scale, 0.7);
+        assert!(Settings::from_value(&json!({"accounts":[]}))
+            .accounts
+            .is_empty());
     }
     #[test]
     fn names_support_unicode_and_reject_controls() {

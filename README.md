@@ -28,7 +28,7 @@ The executable also supports `--check-usage` as a read-only diagnostic for the c
 ## Appearance and interaction
 
 - Main (...) or right-click opens the island's own Preferences view.
-- **Island size** adjusts scale from 75% to 160%, including text, hit targets, and rounded geometry.
+- **Menu size** adjusts the open menu from 75% to 160%; **Floating island size** independently adjusts the collapsed pill/circle and hover card from 60% to 180%. Text, hit targets, and rounded geometry follow their own view's scale.
 - **Circle with usage ring** changes the collapsed state into a circle with an M and the current account's session-usage ring (weekly usage is used if the session window is unavailable). Hover morphs it into a compact view with the account name, session/weekly usage and reset countdowns; clicking opens all accounts.
 - Rounded edges use per-pixel transparency with an antialiased mask. No outline stroke or window region is drawn.
 - Open/close, circle hover, screen navigation, size changes, and hover feedback animate; Reduce motion disables these transitions.
@@ -56,5 +56,15 @@ Live authenticated quota fetching is pending explicit approval from the environm
 
 ## Latest checks
 
-Fourteen offline tests pass. Actual preview-window checks confirmed the Already logged in notice, in-island settings, 110% scaling, circle collapse and hover details, adding a third account, and Arabic name entry with Enter to save. Rendered PNG previews are under `preview` and contain sample data.
+Nineteen offline tests pass. Actual preview-window checks confirmed the Already logged in notice, in-island settings, 110% scaling, circle collapse and hover details, adding a third account, and Arabic name entry with Enter to save. Rendered PNG previews are under `preview` and contain sample data.
 `Muisland.exe --no-network` runs the actual interface with usage network requests disabled for that process only. It retains local account detection, naming, appearance settings, and explicitly requested save/switch operations. This diagnostic session flag is not persisted; a normal launch automatically updates usage. The assistant uses it while live API authorization is pending.
+
+## Account removal and separate sizes
+
+Account details now include **Remove account**, confirmed inside the island. Removing an entry does not log Claude out or delete server-side chats/files. Its encrypted sign-in snapshot is moved to `removed-accounts` under the existing local data directory. Other accounts keep stable storage-slot IDs even when the visible list changes. A reused slot starts without the removed snapshot. Settings-save failures attempt to restore the archived snapshot and keep the account entry. Removing the last entry leaves an empty state with Add account available.
+
+Preferences now have independent **Menu size** (75–160%) and **Floating island size** (60–180%) controls. Existing single-scale settings migrate to both scales. The floating scale covers the collapsed pill/circle and its hover card; opening the menu uses the menu scale.
+Buttons use measured Segoe UI text metrics, balanced padding, consistent rounded rectangles and a subdued destructive style. Account pagination uses a short opacity fade without horizontal movement; details and settings use a quick crossfade. Window expansion retains its spring animation.
+
+The latest preview-window checks verified centered button labels, independent 110% menu / 80% floating scales through collapse and reopen, and removing a simulated account while preserving the remaining account. No real account was removed in verification.
+

@@ -329,6 +329,32 @@ pub fn account_identity(index: usize) -> io::Result<String> {
 pub fn is_current(index: usize) -> io::Result<bool> {
     Ok(account_identity(index)? == crate::usage::current_account_identity()?)
 }
+/// Removing a slot is reversible: archive its encrypted snapshot, never touch Claude.
+pub fn archive_account(slot: usize) -> io::Result<Option<PathBuf>> {
+    if !(1..=crate::accounts::MAX_ACCOUNTS).contains(&slot) {
+        return Err(io::Error::other("Invalid account slot"));
+    }
+    let source = account_dir(slot)?;
+    if !source.exists() {
+        return Ok(None);
+    }
+    let root = base()?.join("removed-accounts");
+    fs::create_dir_all(&root)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let dest = root.join(format!("account-{slot}-{stamp}"));
+    fs::rename(source, &dest)?;
+    Ok(Some(dest))
+}
+pub fn restore_archived_account(slot: usize, path: &Path) -> io::Result<()> {
+    let root = base()?.join("removed-accounts");
+    if path.parent() != Some(root.as_path()) {
+        return Err(io::Error::other("Invalid archive path"));
+    }
+    fs::rename(path, account_dir(slot)?)
+}
 pub fn saved(index: usize) -> bool {
     account_dir(index)
         .map(|p| p.join("auth.json").is_file())
