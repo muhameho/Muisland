@@ -1,0 +1,16 @@
+[package]
+name = "muisland"
+version = "0.3.0"
+edition = "2021"
+
+[dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_Networking_WinHttp", "Win32_System_Time"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
