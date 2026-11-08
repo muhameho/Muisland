@@ -315,13 +315,27 @@ fn collect_decrypted(src: &Path, dst: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) 
     Ok(())
 }
 
+pub fn account_identity(index: usize) -> io::Result<String> {
+    let config: Value = json(serde_json::from_slice(&dpapi(
+        &fs::read(account_dir(index)?.join("auth.json"))?,
+        false,
+    )?))?;
+    config["lastKnownAccountUuid"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| io::Error::other("Save this account again to identify it"))
+}
+pub fn is_current(index: usize) -> io::Result<bool> {
+    Ok(account_identity(index)? == crate::usage::current_account_identity()?)
+}
 pub fn saved(index: usize) -> bool {
     account_dir(index)
         .map(|p| p.join("auth.json").is_file())
         .unwrap_or(false)
 }
 pub fn capture(index: usize) -> io::Result<()> {
-    if !(1..=2).contains(&index) {
+    if !(1..=crate::accounts::MAX_ACCOUNTS).contains(&index) {
         return Err(io::Error::other("Invalid account"));
     }
     check_closed()?;
@@ -336,7 +350,10 @@ pub fn capture(index: usize) -> io::Result<()> {
     Ok(())
 }
 pub fn switch(index: usize, protect_local: bool) -> io::Result<()> {
-    if !(1..=2).contains(&index) {
+    if is_current(index).unwrap_or(false) {
+        return Err(io::Error::other("This account is already logged in."));
+    }
+    if !(1..=crate::accounts::MAX_ACCOUNTS).contains(&index) {
         return Err(io::Error::other("Invalid account"));
     }
     check_closed()?;

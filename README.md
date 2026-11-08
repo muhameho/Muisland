@@ -1,67 +1,60 @@
 # Muisland
 
 Native Windows floating account switcher for Claude Desktop, written in Rust.
-Visual inspiration: https://dribbble.com/shots/26245359-Dynamic-Island-Buy-Crypto-Interaction
 
 ## Run
 
-Open `Muisland.exe`, or run `.\build.ps1` to build and launch.
-Building requires Rust and Visual Studio C++ Build Tools.
-`Muisland.exe --preview` uses clearly labelled sample accounts and quota data; it never contacts Anthropic, closes Claude, saves credentials, or persists changes.
+Open `Muisland.exe`. Build with `.\build.ps1` (Rust + Visual Studio C++ Build Tools required).
+`Muisland.exe --preview` uses labelled sample quota data and never reads credentials, contacts Anthropic, closes Claude, writes snapshots, or persists preferences.
 
-## Accounts and names
+## Accounts
 
-1. Sign into your first account in Claude Desktop. Choose Save on its slot in Muisland.
-2. If Claude is open, the island shows a warning. Cancel leaves it open. Close & save closes Claude, including background processes, waits for exit, then captures login state. Local tasks may stop and unsaved work may be lost. Enter defaults to Cancel; Escape cancels.
-3. Sign into the other account in Claude Desktop and save its slot.
-4. With Claude fully closed, click a saved row to switch. Muisland attempts to launch `claude://`.
-5. Select the small (...) on an account card to edit its name or refresh usage. Enter saves the name; Escape cancels the edit. Names support Unicode, including Arabic, and are stored locally.
+- Choose **+ Add account** to add a named account slot (up to 64). Two cards are shown per page; arrows navigate the pages.
+- Sign into Claude, then choose Save on the intended slot. If Claude is running, the island shows Cancel / Close & save, with an explicit warning about interrupted local work.
+- The card's (...) opens an animated details view for renaming and inspecting automatically updated usage. Arabic and other Unicode names are supported.
+- Click an account card to switch. Muisland first verifies whether that saved account is already Claude's current account. If so, an **Already logged in** notice appears inside the island, without closing, saving, restoring, or relaunching Claude.
+- Otherwise switching requires Claude to be closed; if necessary, the island presents Close & switch confirmation.
+- All status, errors, confirmations, settings, and navigation are rendered inside the island. There are no MessageBox dialogs or native popup menus.
 
-## Real quota usage
+## Live usage
 
-The cards show session and weekly percent used, plus a reset countdown and the age of the last reading. Hours indicate time until reset, not guaranteed remaining working hours or a fixed number of messages. Missing measurements stay unavailable; reaching a cached reset time does not fabricate a fresh zero reading.
+There is no Refresh button or connection confirmation. The app automatically reads real quota measurements for saved accounts, refreshes usage every five minutes, and checks the current account every ten seconds. Failed reads retain their original cached timestamp and show an unavailable/stale state. A quota reset countdown is not a guarantee of remaining working hours.
 
-Live usage starts disabled. Choose Refresh live usage (or menu > Refresh all account usage), read the in-island notice, and enable it if desired. The notice explicitly explains the use of saved sign-in credentials with `api.anthropic.com`.
-After enabling, the app refreshes at most once every five minutes automatically. Manual refresh is also available. Turn live usage off in the main menu. Previous cached readings retain their timestamp after failures.
+The reader decrypts Electron v10/AES-GCM token caches locally using Windows DPAPI. It selects only the saved account's user:profile credential. Fresh Desktop credentials are used only after matching the saved account UUID. Read-only HTTPS GET requests go only to `https://api.anthropic.com/api/oauth/usage`; redirects are disabled and Windows validates TLS certificates. Tokens are not printed or sent to other hosts; chats and files are not sent. Tokens are not refreshed or modified by this query. An expired or unsupported session requires signing into Claude and saving the slot again.
 
-The local reader decrypts Electron v10/AES-GCM token caches with Windows DPAPI. It selects only credentials explicitly bound to that saved account ID with user:profile scope. Fresh Desktop credentials are preferred only when their account ID matches the saved slot. Otherwise it uses that slot's encrypted snapshot. It does not read another browser or Claude Code's credentials, rotate tokens, or modify Claude's login for a usage query.
-Read-only HTTPS GET requests use `/api/oauth/usage` on `api.anthropic.com`. Redirects are disabled and Windows validates TLS certificates. No chats, files, telemetry, or credentials are sent to other hosts. This unofficial endpoint and Claude's local storage can change. A 401 requires opening Claude and saving the account again. Missing quota fields and request failures remain visible; the app never substitutes estimates or API billing data.
+This uses an unofficial endpoint and can break when Claude changes. The integration was researched against https://github.com/steipete/CodexBar/blob/main/docs/claude.md and implemented independently.
+The executable also supports `--check-usage` as a read-only diagnostic for the currently signed-in account. This prints only parsed quota numbers, reset timestamps, plan label, and capture time, never credentials.
 
-Research reference (independent implementation, no third-party code incorporated):
-https://github.com/steipete/CodexBar/blob/main/docs/claude.md
-https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work
+## Appearance and interaction
 
-## What switching preserves
+- Main (...) or right-click opens the island's own Preferences view.
+- **Island size** adjusts scale from 75% to 160%, including text, hit targets, and rounded geometry.
+- **Circle with usage ring** changes the collapsed state into a circle with an M and the current account's session-usage ring (weekly usage is used if the session window is unavailable). Hover morphs it into a compact view with the account name, session/weekly usage and reset countdowns; clicking opens all accounts.
+- Rounded edges use per-pixel transparency with an antialiased mask. No outline stroke or window region is drawn.
+- Open/close, circle hover, screen navigation, size changes, and hover feedback animate; Reduce motion disables these transitions.
+- Clickable controls use a Hand cursor; the name field uses an I-beam. Drag the left header to move the island. Tab/Enter/Space navigate controls, Escape goes back/collapses, and name editing supports Ctrl+A/Ctrl+V and Enter to save.
 
-The switcher changes selected authentication data, not server-side account ownership. Chats and cloud Cowork sessions stay with their original account; switching does not transfer them to the other account. Normal switching does not intentionally remove Cowork folders, IndexedDB, or user project files. It is not an export or a guarantee that a local running task will resume.
+## Work, chats, and backup
 
-Cloud Cowork tasks can continue while the desktop app is closed, but local-file access requires the desktop connection. Older local tasks and in-memory work can be interrupted by closing Claude. See:
-https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile
+Switching changes selected authentication data, not server-side account ownership. Cloud chats and Cowork sessions remain with their original account and are not transferred to another account. Local running tasks and unsaved work can be interrupted by closing Claude. Cloud tasks may continue but local file access needs the desktop connection. See https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile
 
-## Optional local checkpoint
+**Back up local data before switch** creates an encrypted, chunked checkpoint of ordinary files under the detected Claude app-data folder, with Claude fully closed. A failed checkpoint cancels switching. Large data folders can take time and disk space. Reparse points are rejected. This does not export cloud chats, back up connected project directories outside Claude's app-data folder, or checkpoint a running process/VM in memory.
 
-Enable **Back up local data before switch** to checkpoint all ordinary files and directories under the detected Claude app-data folder before replacing authentication data. Claude must already be fully closed. If the checkpoint fails, the switch is cancelled. This setting is off by default.
+Preferences > **Recover local backup to folder** decrypts the newest complete checkpoint into a new folder, leaving Claude's live data untouched. It does not automatically import sessions into Claude. The recovered folder contains sensitive application data.
+**Restore previous sign-in** restores the auth-only last-switch backup and is separate from local recovery.
 
-Checkpoints are Windows DPAPI encrypted in bounded-size chunks, support large files, and live under `%LOCALAPPDATA%\ClaudeIsland\local-backups`. Incomplete checkpoints have a `.partial` suffix and are not selected for recovery. Reparse points, including junctions and symbolic links, are rejected rather than followed. Large Claude data folders can take time and disk space. Old checkpoints are retained until you manage them yourself.
+## Storage
 
-The menu's **Recover latest local backup to folder** decrypts the latest completed checkpoint into a new folder under `%LOCALAPPDATA%\ClaudeIsland\recovered` and opens it. This deliberately leaves Claude's live data untouched. The recovered copy contains sensitive application data, just like Claude's original data folder. Recovery does not automatically import sessions into Claude or transfer them between accounts.
-
-This local checkpoint does not export cloud chats, copy connected project folders outside Claude's app-data folder, or preserve a running process/virtual machine in memory. Use Claude's own chat/Cowork export controls when you need a portable transcript or task export.
-
-## Existing storage and rollback
-
-Existing encrypted account snapshots and the auth-only last-switch backup remain in `%LOCALAPPDATA%\ClaudeIsland` for compatibility. Custom names, quota caches, and preferences are DPAPI-encrypted in `muisland-settings.bin` in the same directory.
-The menu's Restore previous session restores the auth-only pre-switch backup while Claude is closed. It is separate from local checkpoint recovery.
-DPAPI is tied to the current Windows user; it does not protect data from other software running as that user. Switching is unofficial and filesystem restore is best effort, not transactional.
-
-## Interface
-
-Click the pill or +/- to expand or collapse; drag the left header to move it.
-The main (...) menu or right-click offers account details, quota refresh, reduced motion, backups, rollback, and exit. Tab/Enter/Space navigate the custom controls; Escape closes the current view.
+Encrypted snapshots remain under `%LOCALAPPDATA%\ClaudeIsland` for backwards compatibility. Names, quota caches, scale, circle mode, and reduced-motion preferences are DPAPI-encrypted in `muisland-settings.bin`. Local backups are in `local-backups`, recovery output in `recovered`. DPAPI is tied to this Windows user and does not protect against programs running as that user.
 
 ## Validation
 
-Windows build: `cargo build --release --offline`; formatting: `cargo fmt --check`.
-Nine offline tests cover Unicode names, settings defaults, missing/invalid quota fields, timezone/reset handling, cross-account credential selection, AES-256-GCM against a known vector and tamper rejection, and encrypted chunked local-backup roundtrip/recovery safety.
-The expanded UI, Arabic name editing and Enter-to-save, quota cards, and optional local-backup toggle were checked in preview mode. Samples are labelled in that mode.
-Live authenticated quota fetching and real account switching/local checkpoints have not been exercised on the user's session. Live requests remain subject to user authorization.
+Build: `cargo build --release --offline`; format: `cargo fmt --check`; tests: `cargo test --offline`.
+Offline tests cover Unicode names, settings migration, additional accounts and limits, hit targets beyond the second account, current-account short circuit, close-confirmation ordering, quota parsing/reset times/account identity isolation, known-vector AES-GCM and tamper rejection, and encrypted large-file backup/recovery safety.
+
+Live authenticated quota fetching is pending explicit approval from the environment's automatic approval reviewer. No rejected live request was executed. The assistant uses only preview mode until that authorization is resolved.
+
+## Latest checks
+
+Fourteen offline tests pass. Actual preview-window checks confirmed the Already logged in notice, in-island settings, 110% scaling, circle collapse and hover details, adding a third account, and Arabic name entry with Enter to save. Rendered PNG previews are under `preview` and contain sample data.
+`Muisland.exe --no-network` runs the actual interface with usage network requests disabled for that process only. It retains local account detection, naming, appearance settings, and explicitly requested save/switch operations. This diagnostic session flag is not persisted; a normal launch automatically updates usage. The assistant uses it while live API authorization is pending.

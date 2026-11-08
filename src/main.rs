@@ -20,7 +20,7 @@ mod island {
     };
     use std::{
         mem::zeroed,
-        ptr::null_mut,
+        ptr::{null, null_mut},
         sync::mpsc::{self, Receiver},
         time::Instant,
     };
@@ -31,218 +31,167 @@ mod island {
     #[link(name = "user32")]
     extern "system" {
         fn SetCapture(hwnd: HWND) -> HWND;
-        fn SetFocus(hwnd: HWND) -> HWND;
         fn ReleaseCapture() -> i32;
         fn SetProcessDPIAware() -> i32;
+        fn GetKeyState(key: i32) -> i16;
+        fn OpenClipboard(hwnd: HWND) -> i32;
+        fn GetClipboardData(format: u32) -> HANDLE;
+        fn CloseClipboard() -> i32;
     }
-    type Dc = *mut core::ffi::c_void;
-    const BG: u32 = 0x000B0B0B;
-    const WHITE: u32 = 0x00F2F3F1;
-    const MUTED: u32 = 0x008C918E;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalLock(handle: HANDLE) -> *mut core::ffi::c_void;
+        fn GlobalUnlock(handle: HANDLE) -> i32;
+        fn GlobalSize(handle: HANDLE) -> usize;
+    }
+    const BG: u32 = 0x000A0C0B;
+    const WHITE: u32 = 0x00F1F4F2;
+    const MUTED: u32 = 0x00919992;
     const GREEN: u32 = 0x0095E2BB;
-    const CW: f32 = 228.;
-    const CH: f32 = 58.;
+    const PANEL: u32 = 0x00171D19;
     const EW: f32 = 420.;
-    const EH: f32 = 480.;
-    enum ActionResult {
-        Completed(String),
-        NeedsClose,
+    const EH: f32 = 536.;
+    const PILL_W: f32 = 228.;
+    const PILL_H: f32 = 58.;
+    const CIRCLE: f32 = 76.;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum Op {
+        Save(usize),
+        Switch(usize),
+        Rollback,
+        Recover,
+    }
+    #[derive(Clone, Debug)]
+    enum View {
+        Home,
+        Details(usize),
+        Preferences,
+        Notice(String, String),
+        Confirm(Op),
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum Action {
+        None,
+        Toggle,
+        Preferences,
+        Back,
+        Details(usize),
+        Save(usize),
+        Switch(usize),
+        Add,
+        Prev,
+        Next,
+        Protect,
+        Smaller,
+        Larger,
+        Circle,
+        Motion,
+        Rollback,
+        Recover,
+        Quit,
+        Confirm,
+        Cancel,
+        NameField,
+        NameSave,
+    }
+    #[derive(Clone, Copy)]
+    struct Button {
+        action: Action,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    }
+    impl Button {
+        fn contains(&self, x: i32, y: i32) -> bool {
+            x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
+        }
+    }
+    enum Outcome {
+        Done(Op, String),
+        NeedsClose(Op),
+        Already(usize),
+    }
+    struct SyncResult {
+        generation: u64,
+        active: Option<usize>,
+        samples: Vec<(usize, String, Result<Usage, String>)>,
     }
     struct State {
+        settings: Settings,
+        saved: Vec<bool>,
+        identities: Vec<Option<String>>,
+        usage_errors: Vec<String>,
+        active: Option<usize>,
+        page: usize,
         open: bool,
+        peek: bool,
+        peek_until: f32,
         w: f32,
         h: f32,
         vw: f32,
         vh: f32,
-        reveal: f32,
-        hover: usize,
-        hot: [f32; 24],
-        focus: usize,
-        down: Option<(i32, i32)>,
-        drag: bool,
-        origin: (i32, i32),
+        scale: f32,
         anchor: f32,
         top: i32,
-        saved: [bool; 2],
-        active: usize,
+        view: View,
+        previous: Option<View>,
+        transition: f32,
+        backwards: bool,
+        reveal: f32,
+        hover: Action,
+        hover_t: f32,
+        focus: Action,
+        down: Option<(i32, i32, Action)>,
+        drag: bool,
+        origin: (i32, i32),
+        edit: Vec<u16>,
+        caret: usize,
+        selected: bool,
+        edit_focus: bool,
         status: String,
+        status_until: f32,
         error: bool,
-        until: f32,
-        worker: Option<Receiver<Result<ActionResult, String>>>,
-        pending: usize,
-        confirmation: Option<usize>,
-        closing: bool,
-        started: f32,
+        pending: Option<Op>,
+        worker: Option<Receiver<Result<Outcome, String>>>,
+        sync: Option<Receiver<SyncResult>>,
+        sync_next: f32,
+        quota_next: f32,
+        generation: u64,
         clock: Instant,
         last: Instant,
-        reduced: bool,
+        last_second: u64,
         preview: bool,
-        settings: Settings,
-        detail: Option<usize>,
-        name_edit: HWND,
-        name_font: HFONT,
-        edit_brush: HBRUSH,
-        usage_worker: Option<Receiver<Vec<(usize, Result<Usage, String>)>>>,
-        usage_errors: [String; 2],
-        usage_next: f32,
-        usage_consent: bool,
-        minute: u64,
+        network_allowed: bool,
     }
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(Some(0)).collect()
     }
     fn mix(a: u32, b: u32, t: f32) -> u32 {
-        let mut c = 0;
-        for sh in [0, 8, 16] {
-            let av = ((a >> sh) & 255) as f32;
-            let bv = ((b >> sh) & 255) as f32;
-            c |= ((av + (bv - av) * t.clamp(0., 1.)) as u32) << sh;
+        let mut result = 0;
+        for shift in [0, 8, 16] {
+            let x = ((a >> shift) & 255) as f32;
+            let y = ((b >> shift) & 255) as f32;
+            result |= ((x + (y - x) * t.clamp(0., 1.)) as u32) << shift;
         }
-        c
+        result
     }
-    fn xy(lp: LPARAM) -> (i32, i32) {
-        (
-            (lp as u32 & 65535) as i16 as i32,
-            ((lp as u32 >> 16) & 65535) as i16 as i32,
-        )
+    fn point(lp: LPARAM, scale: f32) -> (i32, i32) {
+        let x = (lp as u32 & 65535) as i16 as f32;
+        let y = ((lp as u32 >> 16) & 65535) as i16 as f32;
+        ((x / scale) as i32, (y / scale) as i32)
     }
-    unsafe fn panel(dc: Dc, x: i32, y: i32, w: i32, h: i32, r: i32, c: u32) {
-        let b = CreateSolidBrush(c);
-        let ob = SelectObject(dc, b);
-        let op = SelectObject(dc, GetStockObject(NULL_PEN));
+    type Dc = *mut core::ffi::c_void;
+    unsafe fn panel(dc: Dc, x: i32, y: i32, w: i32, h: i32, r: i32, color: u32) {
+        let brush = CreateSolidBrush(color);
+        let old = SelectObject(dc, brush);
+        let pen = SelectObject(dc, GetStockObject(NULL_PEN));
         RoundRect(dc, x * 2, y * 2, (x + w) * 2, (y + h) * 2, r * 4, r * 4);
-        SelectObject(dc, op);
-        SelectObject(dc, ob);
-        DeleteObject(b);
-    }
-    unsafe fn text(dc: Dc, x: i32, y: i32, size: i32, weight: i32, s: &str, c: u32) {
-        let f = CreateFontW(
-            -size * 2,
-            0,
-            0,
-            0,
-            weight,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET as u32,
-            OUT_DEFAULT_PRECIS as u32,
-            CLIP_DEFAULT_PRECIS as u32,
-            ANTIALIASED_QUALITY as u32,
-            DEFAULT_PITCH as u32,
-            wide("Segoe UI Variable Display").as_ptr(),
-        );
-        let old = SelectObject(dc, f);
-        SetBkMode(dc, TRANSPARENT as i32);
-        SetTextColor(dc, c);
-        let chars: Vec<u16> = s.encode_utf16().collect();
-        TextOutW(dc, x * 2, y * 2, chars.as_ptr(), chars.len() as i32);
+        SelectObject(dc, pen);
         SelectObject(dc, old);
-        DeleteObject(f);
+        DeleteObject(brush);
     }
-    unsafe fn line(dc: Dc, points: &[(i32, i32)], width: i32, c: u32) {
-        let pen = CreatePen(PS_SOLID, width * 2, c);
-        let old = SelectObject(dc, pen);
-        let p: Vec<POINT> = points
-            .iter()
-            .map(|(x, y)| POINT { x: x * 2, y: y * 2 })
-            .collect();
-        Polyline(dc, p.as_ptr(), p.len() as i32);
-        SelectObject(dc, old);
-        DeleteObject(pen);
-    }
-    unsafe fn mark(dc: Dc, x: i32, y: i32, c: u32) {
-        line(
-            dc,
-            &[
-                (x, y + 13),
-                (x, y),
-                (x + 7, y + 8),
-                (x + 14, y),
-                (x + 14, y + 13),
-            ],
-            2,
-            c,
-        );
-    }
-    fn hit(s: &State, x: i32, y: i32) -> usize {
-        let w = s.w as i32;
-        if x < 0 || x >= w || y < 0 || y >= s.h as i32 {
-            return 0;
-        }
-        if s.usage_consent && y >= 58 {
-            return if (286..328).contains(&y) {
-                if (24..144).contains(&x) {
-                    22
-                } else if (156..w - 24).contains(&x) {
-                    23
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-        }
-        if s.detail.is_some() && y >= 58 {
-            return if (368..410).contains(&y) {
-                if (24..144).contains(&x) {
-                    15
-                } else if (156..w - 24).contains(&x) {
-                    14
-                } else {
-                    0
-                }
-            } else if (300..340).contains(&y) && (24..w - 24).contains(&x) {
-                13
-            } else {
-                0
-            };
-        }
-        if y < 58 {
-            return if s.open && x > w - 90 && x < w - 48 {
-                6
-            } else {
-                1
-            };
-        }
-        if !s.open || s.reveal < 0.85 {
-            return 0;
-        }
-        if s.confirmation.is_some() {
-            return if (232..274).contains(&y) {
-                if (24..144).contains(&x) {
-                    8
-                } else if (156..w - 24).contains(&x) {
-                    9
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-        }
-        if s.worker.is_some() {
-            return 0;
-        }
-        if (388..426).contains(&y) && (24..w - 24).contains(&x) {
-            return 12;
-        }
-        for i in 0..2 {
-            let top = 126 + i * 124;
-            if y >= top && y < top + 114 && x >= 16 && x < w - 16 {
-                if y < top + 50 && x > w - 96 {
-                    return 3 + i as usize * 2;
-                }
-                if y < top + 50 && x > w - 132 {
-                    return 10 + i as usize;
-                }
-                return 2 + i as usize * 2;
-            }
-        }
-        0
-    }
-    const WM_APP_NAME: u32 = WM_APP + 11;
-    unsafe fn clipped_text(
+    unsafe fn text(
         dc: Dc,
         x: i32,
         y: i32,
@@ -252,30 +201,269 @@ mod island {
         color: u32,
         width: i32,
     ) {
+        let font = CreateFontW(
+            -size * 2,
+            0,
+            0,
+            0,
+            weight,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            0,
+            0,
+            ANTIALIASED_QUALITY as u32,
+            0,
+            wide("Segoe UI Variable Display").as_ptr(),
+        );
+        let old = SelectObject(dc, font);
+        SetBkMode(dc, TRANSPARENT as i32);
+        SetTextColor(dc, color);
         let saved = SaveDC(dc);
-        IntersectClipRect(dc, x * 2, y * 2, (x + width) * 2, (y + size + 5) * 2);
-        text(dc, x, y, size, weight, label, color);
+        IntersectClipRect(dc, x * 2, y * 2, (x + width.max(0)) * 2, (y + size + 6) * 2);
+        let chars: Vec<u16> = label.encode_utf16().collect();
+        TextOutW(dc, x * 2, y * 2, chars.as_ptr(), chars.len() as i32);
         RestoreDC(dc, saved);
+        SelectObject(dc, old);
+        DeleteObject(font);
     }
-    unsafe fn draw_quota(
+    unsafe fn line(dc: Dc, pts: &[(i32, i32)], width: i32, color: u32) {
+        let pen = CreatePen(PS_SOLID, width * 2, color);
+        let old = SelectObject(dc, pen);
+        let points: Vec<POINT> = pts
+            .iter()
+            .map(|(x, y)| POINT { x: x * 2, y: y * 2 })
+            .collect();
+        Polyline(dc, points.as_ptr(), points.len() as i32);
+        SelectObject(dc, old);
+        DeleteObject(pen);
+    }
+    unsafe fn mark(dc: Dc, x: i32, y: i32, size: i32, color: u32) {
+        line(
+            dc,
+            &[
+                (x, y + size),
+                (x, y),
+                (x + size / 2, y + size * 3 / 5),
+                (x + size, y),
+                (x + size, y + size),
+            ],
+            2,
+            color,
+        );
+    }
+    unsafe fn ring(dc: Dc, cx: f32, cy: f32, r: f32, used: Option<f64>) {
+        // Analytic coverage avoids polygon steps in the small circular meter.
+        GdiFlush();
+        let object = GetCurrentObject(dc, OBJ_BITMAP as u32);
+        let mut bitmap: BITMAP = zeroed();
+        if GetObjectW(
+            object,
+            std::mem::size_of::<BITMAP>() as i32,
+            (&mut bitmap as *mut BITMAP).cast(),
+        ) == 0
+            || bitmap.bmBits.is_null()
+        {
+            return;
+        }
+        let width = bitmap.bmWidth;
+        let height = bitmap.bmHeight.abs();
+        let pixels = std::slice::from_raw_parts_mut(
+            bitmap.bmBits as *mut u8,
+            (bitmap.bmWidthBytes * height) as usize,
+        );
+        let (cx, cy, r) = (cx * 2., cy * 2., r * 2.);
+        let fraction = used.unwrap_or(0.).clamp(0., 100.) as f32 / 100.;
+        let end = -std::f32::consts::FRAC_PI_2 + fraction * std::f32::consts::TAU;
+        let endx = cx + end.cos() * r;
+        let endy = cy + end.sin() * r;
+        let accent = if used.unwrap_or(0.) >= 90. {
+            0x009BA7F0
+        } else if used.unwrap_or(0.) >= 70. {
+            0x009FC5F2
+        } else {
+            GREEN
+        };
+        for y in ((cy - r - 5.) as i32).max(0)..((cy + r + 5.) as i32).min(height) {
+            for x in ((cx - r - 5.) as i32).max(0)..((cx + r + 5.) as i32).min(width) {
+                let dx = x as f32 + 0.5 - cx;
+                let dy = y as f32 + 0.5 - cy;
+                let coverage = (3.5 - (dx.hypot(dy) - r).abs()).clamp(0., 1.);
+                let phase = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU;
+                let cap = (3.5 - (x as f32 + 0.5 - endx).hypot(y as f32 + 0.5 - endy))
+                    .clamp(0., 1.)
+                    .max((3.5 - dx.hypot(dy + r)).clamp(0., 1.));
+                let colored = if used.is_some() && fraction > 0. {
+                    if phase <= fraction {
+                        coverage
+                    } else {
+                        cap
+                    }
+                } else {
+                    0.
+                };
+                let total = coverage.max(colored);
+                if total <= 0. {
+                    continue;
+                }
+                let color = mix(0x00313B34, accent, (colored / total).clamp(0., 1.));
+                let offset = (y * bitmap.bmWidthBytes + x * 4) as usize;
+                for channel in 0..3 {
+                    let foreground = ((color >> (channel * 8)) & 255) as f32;
+                    pixels[offset + channel] =
+                        (pixels[offset + channel] as f32 * (1. - total) + foreground * total) as u8;
+                }
+            }
+        }
+    }
+
+    fn buttons(s: &State) -> Vec<Button> {
+        let mut b = Vec::new();
+        let mut add = |action, x, y, w, h| b.push(Button { action, x, y, w, h });
+        if !s.open {
+            add(Action::Toggle, 0, 0, s.w as i32, s.h as i32);
+            return b;
+        }
+        add(Action::Preferences, EW as i32 - 88, 12, 32, 34);
+        add(Action::Toggle, EW as i32 - 46, 12, 32, 34);
+        if s.transition < 0.9 || s.reveal < 0.9 {
+            return b;
+        }
+        match &s.view {
+            View::Home => {
+                for row in 0..2 {
+                    let index = s.page * 2 + row;
+                    if index >= s.settings.accounts.len() {
+                        break;
+                    }
+                    let y = 126 + row as i32 * 124;
+                    add(Action::Switch(index), 16, y, 388, 114);
+                    add(Action::Details(index), 296, y + 14, 28, 32);
+                    add(Action::Save(index), 329, y + 14, 60, 32);
+                }
+                if s.page > 0 {
+                    add(Action::Prev, 24, 382, 36, 34)
+                }
+                if (s.page + 1) * 2 < s.settings.accounts.len() {
+                    add(Action::Next, 68, 382, 36, 34)
+                }
+                add(Action::Add, 230, 382, 166, 34);
+                add(Action::Protect, 24, 432, 372, 48);
+            }
+            View::Details(_) => {
+                add(Action::NameField, 24, 126, 372, 44);
+                add(Action::Back, 24, 410, 120, 42);
+                add(Action::NameSave, 156, 410, 240, 42)
+            }
+            View::Preferences => {
+                add(Action::Smaller, 264, 126, 38, 36);
+                add(Action::Larger, 352, 126, 38, 36);
+                add(Action::Circle, 24, 179, 372, 48);
+                add(Action::Motion, 24, 237, 372, 48);
+                add(Action::Rollback, 24, 303, 372, 36);
+                add(Action::Recover, 24, 347, 372, 36);
+                add(Action::Back, 24, 410, 170, 42);
+                add(Action::Quit, 206, 410, 190, 42)
+            }
+            View::Notice(_, _) => add(Action::Back, 24, 410, 372, 42),
+            View::Confirm(_) => {
+                add(Action::Cancel, 24, 312, 120, 42);
+                add(Action::Confirm, 156, 312, 240, 42)
+            }
+        }
+        b
+    }
+    fn hit(s: &State, x: i32, y: i32) -> Action {
+        buttons(s)
+            .iter()
+            .rev()
+            .find(|b| b.contains(x, y))
+            .map(|b| b.action)
+            .unwrap_or(Action::None)
+    }
+    fn hot(s: &State, a: Action) -> f32 {
+        if s.focus == a {
+            1.
+        } else if s.hover == a {
+            s.hover_t
+        } else {
+            0.
+        }
+    }
+    unsafe fn button(
         dc: Dc,
+        s: &State,
+        a: Action,
         x: i32,
         y: i32,
-        width: i32,
+        w: i32,
+        h: i32,
         label: &str,
-        window: Option<&Window>,
-        a: f32,
+        primary: bool,
     ) {
-        let color = |c| mix(BG, c, a);
+        let pressed = s.down.is_some_and(|(_, _, down)| down == a) && s.hover == a;
+        let d = if pressed { 1 } else { 0 };
+        let bg = if primary {
+            mix(GREEN, WHITE, hot(s, a) * 0.2)
+        } else {
+            mix(0x00212823, 0x00384230, hot(s, a))
+        };
+        panel(dc, x + d, y + d, w - 2 * d, h - 2 * d, h / 2, bg);
+        let approx = label.chars().count() as i32 * 7;
+        text(
+            dc,
+            x + ((w - approx) / 2).max(10),
+            y + (h - 16) / 2,
+            13,
+            600,
+            label,
+            if primary { BG } else { WHITE },
+            w - 20,
+        );
+        if s.focus == a {
+            panel(
+                dc,
+                x + 16,
+                y + h - 5,
+                w - 32,
+                2,
+                1,
+                if primary { BG } else { GREEN },
+            );
+        }
+    }
+    unsafe fn toggle(dc: Dc, s: &State, a: Action, y: i32, label: &str, value: bool) {
+        panel(dc, 24, y, 372, 48, 16, mix(PANEL, 0x002A342E, hot(s, a)));
+        text(dc, 38, y + 16, 13, 500, label, WHITE, 280);
+        panel(
+            dc,
+            340,
+            y + 15,
+            40,
+            18,
+            9,
+            if value { GREEN } else { 0x00434B45 },
+        );
+        panel(
+            dc,
+            if value { 361 } else { 342 },
+            y + 17,
+            14,
+            14,
+            7,
+            if value { BG } else { WHITE },
+        );
+    }
+    unsafe fn quota(dc: Dc, x: i32, y: i32, width: i32, label: &str, window: Option<&Window>) {
         let now = accounts::now();
-        let expired = window.and_then(|w| w.resets).is_some_and(|t| t <= now);
         let title = window
             .map(|w| format!("{label} · {:.0}% used", w.used))
             .unwrap_or_else(|| format!("{label} · —"));
-        text(dc, x, y, 11, 600, &title, color(WHITE));
-        panel(dc, x, y + 18, width, 3, 1, color(0x00313B34));
+        text(dc, x, y, 11, 600, &title, WHITE, width);
+        panel(dc, x, y + 18, width, 3, 1, 0x00313B34);
         if let Some(w) = window {
-            let accent = if expired {
+            let color = if w.resets.is_some_and(|t| t <= now) {
                 MUTED
             } else if w.used >= 90. {
                 0x009BA7F0
@@ -286,533 +474,95 @@ mod island {
             };
             let fill = (width as f64 * w.used / 100.) as i32;
             if fill > 0 {
-                panel(dc, x, y + 18, fill, 3, 1, color(accent));
+                panel(dc, x, y + 18, fill, 3, 1, color);
             }
         }
-        let reset = window
-            .map(|w| w.reset_label(now))
-            .unwrap_or_else(|| "Not available".into());
-        text(dc, x, y + 27, 10, 400, &reset, color(MUTED));
-    }
-    unsafe fn close_detail(s: &mut State) {
-        if !s.name_edit.is_null() {
-            DestroyWindow(s.name_edit);
-            s.name_edit = null_mut();
-        }
-        if !s.name_font.is_null() {
-            DeleteObject(s.name_font);
-            s.name_font = null_mut();
-        }
-        s.detail = None;
-    }
-    unsafe fn open_detail(hwnd: HWND, s: &mut State, index: usize) {
-        if s.worker.is_some() || s.confirmation.is_some() || s.usage_consent {
-            return;
-        }
-        close_detail(s);
-        s.detail = Some(index);
-        s.open = true;
-        s.focus = 0;
-        s.name_font = CreateFontW(
-            -17,
-            0,
-            0,
-            0,
+        text(
+            dc,
+            x,
+            y + 27,
+            10,
             400,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET as u32,
-            0,
-            0,
-            ANTIALIASED_QUALITY as u32,
-            0,
-            wide("Segoe UI Variable Display").as_ptr(),
+            &window
+                .map(|w| w.reset_label(now))
+                .unwrap_or_else(|| "Not available".into()),
+            MUTED,
+            width,
         );
-        s.name_edit = CreateWindowExW(
-            0,
-            wide("EDIT").as_ptr(),
-            wide(&s.settings.accounts[index].name).as_ptr(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL as u32,
-            34,
-            135,
-            EW as i32 - 68,
-            27,
-            hwnd,
-            100usize as HMENU,
-            GetModuleHandleW(null_mut()),
-            null_mut(),
-        );
-        SendMessageW(s.name_edit, WM_SETFONT, s.name_font as WPARAM, 1);
-        SendMessageW(s.name_edit, 0x00C5, 64, 0);
-        SetFocus(s.name_edit);
-        SendMessageW(s.name_edit, 0x00B1, 0, -1);
-        InvalidateRect(hwnd, null_mut(), 0);
     }
-    fn persist(s: &mut State) -> bool {
-        if s.preview {
-            return true;
-        }
-        match s.settings.save() {
-            Ok(()) => true,
-            Err(_) => {
-                s.status = "Could not save settings on this device".into();
-                s.error = true;
-                s.until = s.clock.elapsed().as_secs_f32() + 6.;
-                false
+    unsafe fn paragraph(dc: Dc, x: i32, mut y: i32, label: &str, color: u32) {
+        let mut current = String::new();
+        for word in label.split_whitespace() {
+            if current.chars().count() + word.chars().count() > 49 && !current.is_empty() {
+                text(dc, x, y, 13, 400, &current, color, 365);
+                y += 24;
+                current.clear();
             }
-        }
-    }
-    unsafe fn save_name(hwnd: HWND, s: &mut State) {
-        if let Some(index) = s.detail {
-            let mut buffer = [0u16; 128];
-            let len = GetWindowTextW(s.name_edit, buffer.as_mut_ptr(), buffer.len() as i32);
-            let name = String::from_utf16_lossy(&buffer[..len.max(0) as usize]);
-            match accounts::valid_name(&name) {
-                Ok(name) => {
-                    let old = s.settings.accounts[index].name.clone();
-                    s.settings.accounts[index].name = name;
-                    if persist(s) {
-                        close_detail(s);
-                        s.status = "Account name saved".into();
-                        s.until = s.clock.elapsed().as_secs_f32() + 4.;
-                        SetFocus(hwnd);
-                    } else {
-                        s.settings.accounts[index].name = old;
-                    }
-                }
-                Err(e) => {
-                    s.status = e.to_string();
-                    s.until = s.clock.elapsed().as_secs_f32() + 5.;
-                }
+            if !current.is_empty() {
+                current.push(' ')
             }
+            current.push_str(word);
+        }
+        if !current.is_empty() {
+            text(dc, x, y, 13, 400, &current, color, 365);
         }
     }
-    unsafe fn refresh_usage(s: &mut State) {
-        if s.usage_worker.is_some() || s.worker.is_some() {
-            return;
-        }
-        if !s.settings.live_usage && !s.preview {
-            s.usage_consent = true;
-            s.open = true;
-            s.focus = 22;
-            close_detail(s);
-            return;
-        }
-        s.usage_next = s.clock.elapsed().as_secs_f32() + 300.;
-        let indices = (0..2).filter(|&i| s.saved[i]).collect::<Vec<_>>();
-        if indices.is_empty() {
-            s.status = "Save an account first to connect its usage".into();
-            s.until = s.clock.elapsed().as_secs_f32() + 5.;
-            return;
-        }
-        let preview = s.preview;
-        let (tx, rx) = mpsc::channel();
-        s.usage_worker = Some(rx);
-        std::thread::spawn(move || {
-            let results = indices
-                .into_iter()
-                .map(|i| {
-                    let result = if preview {
-                        Ok(Usage {
-                            session: Some(Window {
-                                used: 28.,
-                                resets: Some(accounts::now() + 7200),
-                            }),
-                            weekly: Some(Window {
-                                used: 46.,
-                                resets: Some(accounts::now() + 86400 * 3),
-                            }),
-                            updated: accounts::now(),
-                            plan: "Demo".into(),
-                        })
-                    } else {
-                        usage::fetch(i + 1).map_err(|e| e.to_string())
-                    };
-                    (i, result)
-                })
-                .collect();
-            let _ = tx.send(results);
-        });
-    }
-    unsafe fn paint(hwnd: HWND, s: &State) {
-        let mut ps = zeroed();
-        let dc = BeginPaint(hwnd, &mut ps);
-        let w = s.w.round() as i32;
-        let h = s.h.round() as i32;
-        let mem = CreateCompatibleDC(dc);
-        let bmp = CreateCompatibleBitmap(dc, w * 2, h * 2);
-        let old = SelectObject(mem, bmp);
-        let r = RECT {
-            left: 0,
-            top: 0,
-            right: w * 2,
-            bottom: h * 2,
-        };
-        let b = CreateSolidBrush(BG);
-        FillRect(mem, &r, b);
-        DeleteObject(b);
-        // A one-pixel rim keeps the black silhouette readable on dark desktops.
-        let radius = 29 + (s.reveal * 7.) as i32;
-        panel(mem, 0, 0, w, h, radius, 0x002A2D2B);
-        panel(mem, 1, 1, w - 2, h - 2, radius - 1, BG);
-        panel(mem, 16, 14, 30, 30, 15, 0x0026362E);
-        mark(mem, 24, 22, GREEN);
-        text(mem, 57, 17, 18, 600, "Muisland", WHITE);
-        if s.open {
-            text(mem, w - 79, 17, 18, 600, "···", mix(MUTED, WHITE, s.hot[6]));
-        }
-        panel(
-            mem,
-            w - 43,
-            14,
-            29,
-            29,
-            15,
-            mix(0x001B1E1C, 0x00383D39, s.hot[1]),
-        );
-        let cy = 28;
-        line(mem, &[(w - 33, cy), (w - 24, cy)], 1, WHITE);
-        let plus = (1. - s.reveal) * 5.;
-        if plus > 0.5 {
-            line(
-                mem,
-                &[(w - 28, cy - plus as i32), (w - 28, cy + plus as i32)],
-                1,
-                WHITE,
-            );
-        }
-        if s.reveal > 0.01 {
-            let a = s.reveal;
-            let off = ((1. - a) * 12.) as i32;
-            if s.usage_consent {
-                let color = |c| mix(BG, c, a);
+    unsafe fn draw_view(dc: Dc, s: &State, view: &View) {
+        match view {
+            View::Home => {
+                text(dc, 24, 76, 24, 600, "Your accounts.", WHITE, 370);
                 text(
-                    mem,
-                    24,
-                    84 + off,
-                    23,
-                    600,
-                    "Connect live usage",
-                    color(WHITE),
-                );
-                text(
-                    mem,
+                    dc,
                     25,
-                    128 + off,
-                    13,
-                    400,
-                    "Read real limits using your saved Claude login.",
-                    color(MUTED),
-                );
-                text(
-                    mem,
-                    25,
-                    154 + off,
-                    13,
-                    400,
-                    "Its sign-in token is sent over HTTPS only to",
-                    color(MUTED),
-                );
-                text(
-                    mem,
-                    25,
-                    176 + off,
-                    15,
-                    600,
-                    "api.anthropic.com",
-                    color(GREEN),
-                );
-                text(
-                    mem,
-                    25,
-                    209 + off,
+                    108,
                     12,
                     400,
-                    "No chats are sent. Refreshes every 5 minutes.",
-                    color(MUTED),
-                );
-                text(
-                    mem,
-                    25,
-                    232 + off,
-                    12,
-                    400,
-                    "You can turn this off in the menu at any time.",
-                    color(MUTED),
-                );
-                panel(
-                    mem,
-                    24,
-                    286,
-                    120,
-                    42,
-                    21,
-                    color(mix(0x00212622, 0x00384039, s.hot[22])),
-                );
-                text(mem, 62, 298, 13, 600, "Cancel", color(WHITE));
-                panel(
-                    mem,
-                    156,
-                    286,
-                    w - 180,
-                    42,
-                    21,
-                    color(mix(GREEN, WHITE, s.hot[23] * 0.2)),
-                );
-                text(mem, 205, 298, 13, 600, "Enable usage", color(BG));
-            } else if let Some(index) = s.detail {
-                text(
-                    mem,
-                    24,
-                    78 + off,
-                    24,
-                    600,
-                    "Account details",
-                    mix(BG, WHITE, a),
-                );
-                text(
-                    mem,
-                    25,
-                    108 + off,
-                    12,
-                    400,
-                    "Name · up to 32 characters",
-                    mix(BG, MUTED, a),
-                );
-                panel(mem, 24, 126, w - 48, 44, 12, 0x00212723);
-                let account = &s.settings.accounts[index];
-                let plan = account
-                    .usage
-                    .as_ref()
-                    .map(|u| u.plan.as_str())
-                    .filter(|p| !p.is_empty())
-                    .unwrap_or("Not yet read");
-                text(
-                    mem,
-                    25,
-                    185,
-                    12,
-                    600,
-                    &format!("PLAN · {}", plan.to_uppercase()),
-                    mix(BG, WHITE, a),
-                );
-                draw_quota(
-                    mem,
-                    25,
-                    219,
-                    w / 2 - 44,
-                    "5h",
-                    account.usage.as_ref().and_then(|u| u.session.as_ref()),
-                    a,
-                );
-                draw_quota(
-                    mem,
-                    w / 2 + 6,
-                    219,
-                    w / 2 - 34,
-                    "7d",
-                    account.usage.as_ref().and_then(|u| u.weekly.as_ref()),
-                    a,
-                );
-                let source = if s.preview {
-                    "Preview · sample data".into()
-                } else if let Some(u) = &account.usage {
-                    format!(
-                        "Last read {}",
-                        accounts::age(accounts::now().saturating_sub(u.updated))
-                    )
-                } else {
-                    "No quota reading for this account yet".into()
-                };
-                clipped_text(mem, 25, 277, 11, 400, &source, MUTED, w - 50);
-                panel(
-                    mem,
-                    24,
-                    300,
-                    w - 48,
-                    40,
-                    20,
-                    mix(0x00212C24, 0x0037473C, s.hot[13]),
-                );
-                text(
-                    mem,
-                    130,
-                    311,
-                    13,
-                    600,
-                    if s.usage_worker.is_some() {
-                        "Refreshing…"
-                    } else {
-                        "Refresh live usage"
-                    },
-                    GREEN,
-                );
-                text(
-                    mem,
-                    25,
-                    348,
-                    11,
-                    400,
-                    "Names stay on this device. Limits come from Claude.",
+                    "Live limits. A seamless switch.",
                     MUTED,
+                    370,
                 );
-                panel(
-                    mem,
-                    24,
-                    368,
-                    120,
-                    42,
-                    21,
-                    mix(0x00212622, 0x00384039, s.hot[15]),
-                );
-                text(mem, 68, 380, 13, 600, "Back", WHITE);
-                panel(
-                    mem,
-                    156,
-                    368,
-                    w - 180,
-                    42,
-                    21,
-                    mix(GREEN, WHITE, s.hot[14] * 0.2),
-                );
-                text(mem, 208, 380, 13, 600, "Save name", BG);
-            } else if let Some(id) = s.confirmation {
-                let color = |c| mix(BG, c, a);
-                panel(mem, 24, 75 + off, 34, 34, 17, color(0x002B3245));
-                text(mem, 37, 81 + off, 19, 600, "!", color(0x009FC5F2));
-                text(
-                    mem,
-                    24,
-                    124 + off,
-                    23,
-                    600,
-                    "Close Claude & save?",
-                    color(WHITE),
-                );
-                text(
-                    mem,
-                    25,
-                    159 + off,
-                    13,
-                    400,
-                    "Claude Desktop will close. Local tasks may stop",
-                    color(MUTED),
-                );
-                text(
-                    mem,
-                    25,
-                    180 + off,
-                    13,
-                    400,
-                    "and unsaved work may be lost.",
-                    color(MUTED),
-                );
-                text(
-                    mem,
-                    25,
-                    207 + off,
-                    12,
-                    400,
-                    &format!("Save to {}.", s.settings.accounts[(id - 2) / 2].name),
-                    color(WHITE),
-                );
-                panel(
-                    mem,
-                    24,
-                    232,
-                    120,
-                    42,
-                    21,
-                    color(mix(0x00212622, 0x00384039, s.hot[8])),
-                );
-                text(mem, 62, 244, 13, 600, "Cancel", color(WHITE));
-                panel(
-                    mem,
-                    156,
-                    232,
-                    w - 180,
-                    42,
-                    21,
-                    color(mix(GREEN, WHITE, s.hot[9] * 0.25)),
-                );
-                text(mem, 191, 244, 13, 600, "Close & save", color(BG));
-                if s.focus == 8 {
-                    panel(mem, 56, 266, 54, 2, 1, color(GREEN));
-                }
-                if s.focus == 9 {
-                    panel(mem, 186, 266, 92, 2, 1, color(BG));
-                }
-            } else {
-                text(
-                    mem,
-                    23,
-                    74 + off,
-                    24,
-                    600,
-                    "Your accounts.",
-                    mix(BG, WHITE, a),
-                );
-                text(
-                    mem,
-                    24,
-                    105 + off,
-                    12,
-                    400,
-                    "One little island. A seamless switch.",
-                    mix(BG, MUTED, a),
-                );
-                for i in 0..2 {
-                    let delay = (a * 1.25 - i as f32 * 0.15).clamp(0., 1.);
-                    let y = 126 + i as i32 * 124 + ((1. - delay) * 16.) as i32;
-                    let id = 2 + i * 2;
-                    let hot = s.hot[id].max(s.hot[id + 1]);
-                    let account = &s.settings.accounts[i];
+                for row in 0..2 {
+                    let i = s.page * 2 + row;
+                    let Some(account) = s.settings.accounts.get(i) else {
+                        break;
+                    };
+                    let y = 126 + row as i32 * 124;
                     panel(
-                        mem,
+                        dc,
                         16,
                         y,
-                        w - 32,
+                        388,
                         114,
                         20,
-                        mix(BG, mix(0x00191C1A, 0x002A312C, hot), delay),
+                        mix(PANEL, 0x00242F27, hot(s, Action::Switch(i)) * 0.8),
                     );
                     panel(
-                        mem,
+                        dc,
                         28,
                         y + 14,
                         34,
                         34,
                         17,
-                        mix(BG, if i == 0 { 0x0034483C } else { 0x00403632 }, delay),
+                        if s.active == Some(i) {
+                            0x0036483A
+                        } else {
+                            0x00382F2B
+                        },
                     );
-                    text(
-                        mem,
-                        40,
-                        y + 20,
-                        15,
-                        600,
-                        &(i + 1).to_string(),
-                        mix(BG, GREEN, delay),
-                    );
-                    clipped_text(
-                        mem,
-                        75,
-                        y + 12,
-                        15,
-                        600,
-                        &account.name,
-                        mix(BG, WHITE, delay),
-                        w - 216,
-                    );
-                    let subtitle = if s.preview {
+                    text(dc, 39, y + 20, 15, 600, &(i + 1).to_string(), GREEN, 25);
+                    text(dc, 75, y + 12, 15, 600, &account.name, WHITE, 213);
+                    let sub = if s.preview {
                         "Preview · sample data".into()
                     } else if !s.saved[i] {
-                        "Not saved · Save to connect".into()
+                        "Not saved · Save to link".into()
                     } else if let Some(u) = &account.usage {
                         format!(
                             "{} · {}{}",
-                            if s.active == i + 1 { "Active" } else { "Saved" },
+                            if s.active == Some(i) {
+                                "Logged in"
+                            } else {
+                                "Saved"
+                            },
                             accounts::age(accounts::now().saturating_sub(u.updated)),
                             if s.usage_errors[i].is_empty() {
                                 ""
@@ -823,405 +573,952 @@ mod island {
                     } else if !s.usage_errors[i].is_empty() {
                         "Usage unavailable · see details".into()
                     } else {
-                        "Saved · usage not loaded".into()
+                        if s.network_allowed {
+                            "Saved · reading usage…".into()
+                        } else {
+                            "Saved · usage not yet read".into()
+                        }
                     };
-                    clipped_text(
-                        mem,
-                        75,
-                        y + 33,
-                        10,
-                        400,
-                        &subtitle,
-                        mix(BG, MUTED, delay),
-                        w - 180,
-                    );
-                    panel(
-                        mem,
-                        w - 124,
-                        y + 17,
-                        25,
-                        28,
-                        13,
-                        mix(BG, mix(0x00252C27, 0x00414C44, s.hot[10 + i]), delay),
-                    );
-                    text(mem, w - 119, y + 21, 15, 600, "···", mix(BG, MUTED, delay));
-                    panel(
-                        mem,
-                        w - 91,
-                        y + 17,
-                        60,
-                        28,
-                        14,
-                        mix(BG, mix(0x002C332E, 0x00445147, s.hot[id + 1]), delay),
-                    );
-                    text(mem, w - 75, y + 23, 12, 600, "Save", mix(BG, GREEN, delay));
-                    draw_quota(
-                        mem,
+                    text(dc, 75, y + 33, 10, 400, &sub, MUTED, 213);
+                    button(dc, s, Action::Details(i), 296, y + 15, 28, 30, "···", false);
+                    button(dc, s, Action::Save(i), 329, y + 15, 60, 30, "Save", false);
+                    quota(
+                        dc,
                         28,
                         y + 59,
-                        w / 2 - 46,
+                        164,
                         "5h",
                         account.usage.as_ref().and_then(|u| u.session.as_ref()),
-                        delay,
                     );
-                    draw_quota(
-                        mem,
-                        w / 2 + 6,
+                    quota(
+                        dc,
+                        216,
                         y + 59,
-                        w / 2 - 34,
+                        176,
                         "7d",
                         account.usage.as_ref().and_then(|u| u.weekly.as_ref()),
-                        delay,
                     );
-                    if s.focus == id || s.focus == id + 1 || s.focus == 10 + i {
-                        panel(mem, 20, y + 22, 2, 16, 1, GREEN);
-                    }
                 }
-                panel(
-                    mem,
-                    24,
-                    388,
-                    w - 48,
-                    38,
-                    16,
-                    mix(BG, mix(0x001A201C, 0x002A342E, s.hot[12]), a),
-                );
+                if s.page > 0 {
+                    button(dc, s, Action::Prev, 24, 382, 36, 34, "‹", false)
+                }
+                if (s.page + 1) * 2 < s.settings.accounts.len() {
+                    button(dc, s, Action::Next, 68, 382, 36, 34, "›", false)
+                }
                 text(
-                    mem,
-                    37,
-                    400,
+                    dc,
+                    116,
+                    392,
                     11,
-                    600,
-                    "Back up local data before switch",
-                    mix(BG, WHITE, a),
-                );
-                panel(
-                    mem,
-                    w - 79,
-                    398,
-                    40,
-                    18,
-                    9,
-                    mix(
-                        BG,
-                        if s.settings.protect_local {
-                            GREEN
-                        } else {
-                            0x00434B45
-                        },
-                        a,
-                    ),
-                );
-                panel(
-                    mem,
-                    if s.settings.protect_local {
-                        w - 58
-                    } else {
-                        w - 77
-                    },
                     400,
-                    14,
-                    14,
-                    7,
-                    mix(BG, if s.settings.protect_local { BG } else { WHITE }, a),
+                    &format!("{} / {}", s.page + 1, s.settings.accounts.len().div_ceil(2)),
+                    MUTED,
+                    100,
+                );
+                button(
+                    dc,
+                    s,
+                    Action::Add,
+                    230,
+                    382,
+                    166,
+                    34,
+                    "+ Add account",
+                    false,
+                );
+                toggle(
+                    dc,
+                    s,
+                    Action::Protect,
+                    432,
+                    "Back up local data before switch",
+                    s.settings.protect_local,
                 );
             }
-            panel(mem, 24, 438, w - 48, 1, 0, mix(BG, 0x00272C28, a));
-            let busy = s.worker.is_some();
-            let err = s.error && !s.status.is_empty();
-            let color = if err { 0x009BA7F0 } else { GREEN };
-            if busy {
-                let t = s.clock.elapsed().as_secs_f32() * 6.;
-                for j in 0..3 {
-                    let height = 4 + ((t + j as f32 * 0.9).sin() * 3. + 3.) as i32;
-                    panel(
-                        mem,
-                        25 + j * 5,
-                        459 - height / 2,
-                        2,
-                        height,
-                        1,
-                        mix(BG, GREEN, a),
+            View::Details(i) => {
+                if let Some(a) = s.settings.accounts.get(*i) {
+                    text(dc, 24, 78, 24, 600, "Account details", WHITE, 370);
+                    text(
+                        dc,
+                        25,
+                        108,
+                        12,
+                        400,
+                        "Name · up to 32 characters",
+                        MUTED,
+                        370,
+                    );
+                    panel(dc, 24, 126, 372, 44, 12, 0x00212723);
+                    let label = if matches!(s.view,View::Details(j)if j==*i) {
+                        String::from_utf16_lossy(&s.edit)
+                    } else {
+                        a.name.clone()
+                    };
+                    if s.selected && s.edit_focus {
+                        panel(
+                            dc,
+                            34,
+                            136,
+                            ((label.chars().count() * 9) as i32).min(345),
+                            24,
+                            3,
+                            0x004A604F,
+                        );
+                    }
+                    text(dc, 35, 137, 17, 400, &label, WHITE, 345);
+                    if s.edit_focus && ((s.clock.elapsed().as_millis() / 500) % 2 == 0) {
+                        let cx = 35 + (s.caret as i32 * 8).min(339);
+                        panel(dc, cx, 138, 1, 22, 0, GREEN);
+                    }
+                    text(
+                        dc,
+                        25,
+                        191,
+                        12,
+                        600,
+                        &format!(
+                            "PLAN · {}",
+                            a.usage
+                                .as_ref()
+                                .map(|u| u.plan.as_str())
+                                .filter(|p| !p.is_empty())
+                                .unwrap_or("Unavailable")
+                                .to_uppercase()
+                        ),
+                        WHITE,
+                        365,
+                    );
+                    quota(
+                        dc,
+                        25,
+                        229,
+                        165,
+                        "5h",
+                        a.usage.as_ref().and_then(|u| u.session.as_ref()),
+                    );
+                    quota(
+                        dc,
+                        216,
+                        229,
+                        176,
+                        "7d",
+                        a.usage.as_ref().and_then(|u| u.weekly.as_ref()),
+                    );
+                    text(
+                        dc,
+                        25,
+                        293,
+                        11,
+                        400,
+                        if s.preview {
+                            "Preview · sample values"
+                        } else {
+                            "Updates automatically from your Claude session."
+                        },
+                        MUTED,
+                        365,
+                    );
+                    if let Some(error) = s.usage_errors.get(*i).filter(|e| !e.is_empty()) {
+                        paragraph(dc, 25, 324, error, 0x009BA7F0);
+                    }
+                    button(dc, s, Action::Back, 24, 410, 120, 42, "Back", false);
+                    button(
+                        dc,
+                        s,
+                        Action::NameSave,
+                        156,
+                        410,
+                        240,
+                        42,
+                        "Save name",
+                        true,
                     );
                 }
-            } else {
-                panel(mem, 25, 456, 6, 6, 3, mix(BG, color, a));
             }
-            let label = if busy {
-                if s.closing {
-                    "Closing Claude, then saving your session…"
-                } else if s.pending == 30 {
-                    "Recovering local backup…"
-                } else if matches!(s.pending, 2 | 4) && s.settings.protect_local {
-                    "Backing up local data, then switching…"
-                } else if s.pending == 7 {
-                    "Restoring last session…"
-                } else if s.pending % 2 == 1 {
-                    "Saving your session…"
-                } else {
-                    "Switching your account…"
-                }
-            } else if s.usage_worker.is_some() {
-                "Reading real account limits from Anthropic…"
-            } else if s.usage_consent {
-                "Usage stays off until you enable it"
-            } else if s.confirmation.is_some() {
-                "Nothing closes until you confirm"
-            } else if !s.status.is_empty() {
-                &s.status
-            } else {
-                if let Some(i) = s.detail {
-                    if s.usage_errors[i].is_empty() {
-                        "Close Claude before switching"
+            View::Preferences => {
+                text(dc, 24, 78, 24, 600, "Make it yours.", WHITE, 370);
+                text(dc, 25, 109, 12, 400, "Appearance & local data", MUTED, 370);
+                text(dc, 26, 138, 13, 600, "Island size", WHITE, 200);
+                button(dc, s, Action::Smaller, 264, 126, 38, 36, "−", false);
+                text(
+                    dc,
+                    309,
+                    137,
+                    12,
+                    600,
+                    &format!("{}%", (s.settings.scale * 100.).round() as i32),
+                    WHITE,
+                    45,
+                );
+                button(dc, s, Action::Larger, 352, 126, 38, 36, "+", false);
+                toggle(
+                    dc,
+                    s,
+                    Action::Circle,
+                    179,
+                    "Circle with usage ring",
+                    s.settings.circle,
+                );
+                toggle(
+                    dc,
+                    s,
+                    Action::Motion,
+                    237,
+                    "Reduce motion",
+                    s.settings.reduced_motion,
+                );
+                button(
+                    dc,
+                    s,
+                    Action::Rollback,
+                    24,
+                    303,
+                    372,
+                    36,
+                    "Restore previous sign-in",
+                    false,
+                );
+                button(
+                    dc,
+                    s,
+                    Action::Recover,
+                    24,
+                    347,
+                    372,
+                    36,
+                    "Recover local backup to folder",
+                    false,
+                );
+                button(dc, s, Action::Back, 24, 410, 170, 42, "Back", false);
+                button(
+                    dc,
+                    s,
+                    Action::Quit,
+                    206,
+                    410,
+                    190,
+                    42,
+                    "Quit Muisland",
+                    false,
+                );
+            }
+            View::Notice(title, body) => {
+                panel(dc, 25, 80, 34, 34, 17, 0x00283530);
+                text(dc, 37, 84, 20, 600, "i", GREEN, 20);
+                text(dc, 24, 132, 23, 600, title, WHITE, 372);
+                paragraph(dc, 25, 180, body, if s.error { 0x009BA7F0 } else { MUTED });
+                button(dc, s, Action::Back, 24, 410, 372, 42, "Got it", true)
+            }
+            View::Confirm(op) => {
+                let saving = matches!(op, Op::Save(_));
+                text(
+                    dc,
+                    24,
+                    89,
+                    24,
+                    600,
+                    if saving {
+                        "Close Claude & save?"
                     } else {
-                        &s.usage_errors[i]
-                    }
-                } else {
-                    "Account menu · rename and refresh usage"
+                        "Close Claude & switch?"
+                    },
+                    WHITE,
+                    372,
+                );
+                paragraph(dc,25,142,"Claude Desktop will close. Local tasks may stop and unsaved work may be lost. Nothing closes until you confirm.",MUTED);
+                if let Op::Save(i) | Op::Switch(i) = op {
+                    text(
+                        dc,
+                        25,
+                        248,
+                        12,
+                        600,
+                        &format!("Account: {}", s.settings.accounts[*i].name),
+                        WHITE,
+                        365,
+                    );
                 }
+                button(dc, s, Action::Cancel, 24, 312, 120, 42, "Cancel", false);
+                button(
+                    dc,
+                    s,
+                    Action::Confirm,
+                    156,
+                    312,
+                    240,
+                    42,
+                    if saving {
+                        "Close & save"
+                    } else {
+                        "Close & switch"
+                    },
+                    true,
+                )
+            }
+        }
+    }
+    struct Surface {
+        dc: Dc,
+        bmp: HBITMAP,
+        old: HGDIOBJ,
+        bits: *mut u8,
+        w: i32,
+        h: i32,
+    }
+    impl Surface {
+        unsafe fn new(w: i32, h: i32) -> Self {
+            let dc = CreateCompatibleDC(null_mut());
+            let mut info: BITMAPINFO = zeroed();
+            info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            info.bmiHeader.biWidth = w;
+            info.bmiHeader.biHeight = -h;
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+            let mut bits = null_mut();
+            let bmp = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+            let old = SelectObject(dc, bmp);
+            Self {
+                dc,
+                bmp,
+                old,
+                bits: bits.cast(),
+                w,
+                h,
+            }
+        }
+        unsafe fn clear(&self) {
+            let brush = CreateSolidBrush(BG);
+            FillRect(
+                self.dc,
+                &RECT {
+                    left: 0,
+                    top: 0,
+                    right: self.w,
+                    bottom: self.h,
+                },
+                brush,
+            );
+            DeleteObject(brush);
+        }
+    }
+    impl Drop for Surface {
+        fn drop(&mut self) {
+            unsafe {
+                SelectObject(self.dc, self.old);
+                DeleteObject(self.bmp);
+                DeleteDC(self.dc);
+            }
+        }
+    }
+    unsafe fn render_surface(s: &State) -> Option<Surface> {
+        let lw = s.w.round().max(1.) as i32;
+        let lh = s.h.round().max(1.) as i32;
+        let source = Surface::new(lw * 2, lh * 2);
+        if source.bits.is_null() {
+            return None;
+        }
+        source.clear();
+        if !s.open && s.settings.circle {
+            let p = ((s.w - CIRCLE) / (320. - CIRCLE)).clamp(0., 1.);
+            let cx = 38. + p * 14.;
+            let cy = 38. + p * 54.;
+            let account = s.active.and_then(|i| s.settings.accounts.get(i));
+            let u = account.and_then(|a| a.usage.as_ref());
+            let used = u
+                .and_then(|u| u.session.as_ref().or(u.weekly.as_ref()))
+                .map(|w| w.used);
+            ring(source.dc, cx, cy, 27., used);
+            mark(source.dc, cx as i32 - 9, cy as i32 - 9, 18, WHITE);
+            if p > 0.3 {
+                let name = account
+                    .map(|a| a.name.as_str())
+                    .unwrap_or("No linked account");
+                text(source.dc, 98, 31, 16, 600, name, WHITE, 205);
+                quota(
+                    source.dc,
+                    98,
+                    57,
+                    194,
+                    "5h",
+                    u.and_then(|u| u.session.as_ref()),
+                );
+                quota(
+                    source.dc,
+                    98,
+                    110,
+                    194,
+                    "7d",
+                    u.and_then(|u| u.weekly.as_ref()),
+                );
+            }
+        } else {
+            panel(source.dc, 16, 14, 30, 30, 15, 0x0026352D);
+            mark(source.dc, 24, 22, 14, GREEN);
+            text(source.dc, 57, 17, 18, 600, "Muisland", WHITE, 170);
+            let w = lw;
+            button(
+                source.dc,
+                s,
+                Action::Toggle,
+                w - 43,
+                14,
+                29,
+                29,
+                if s.open { "−" } else { "+" },
+                false,
+            );
+            if s.open {
+                text(
+                    source.dc,
+                    w - 81,
+                    15,
+                    21,
+                    600,
+                    "···",
+                    mix(MUTED, WHITE, hot(s, Action::Preferences)),
+                    30,
+                );
+            }
+            if s.reveal > 0.01 && lh > 70 {
+                let layer = Surface::new(lw * 2, lh * 2);
+                layer.clear();
+                let motion = 1. - (1. - s.transition).powi(3);
+                if let Some(previous) = &s.previous {
+                    let saved = SaveDC(source.dc);
+                    IntersectClipRect(source.dc, 0, 58 * 2, lw * 2, lh * 2);
+                    SetViewportOrgEx(
+                        source.dc,
+                        (-motion * 26. * if s.backwards { -1. } else { 1. }) as i32 * 2,
+                        0,
+                        null_mut(),
+                    );
+                    draw_view(source.dc, s, previous);
+                    RestoreDC(source.dc, saved);
+                }
+                let saved = SaveDC(layer.dc);
+                SetViewportOrgEx(
+                    layer.dc,
+                    ((1. - motion) * 26. * if s.backwards { -1. } else { 1. }) as i32 * 2,
+                    ((1. - s.reveal) * 12.) as i32 * 2,
+                    null_mut(),
+                );
+                draw_view(layer.dc, s, &s.view);
+                RestoreDC(layer.dc, saved);
+                let alpha = (motion * s.reveal * 255.).clamp(0., 255.) as u8;
+                AlphaBlend(
+                    source.dc,
+                    0,
+                    58 * 2,
+                    lw * 2,
+                    (lh - 58) * 2,
+                    layer.dc,
+                    0,
+                    58 * 2,
+                    lw * 2,
+                    (lh - 58) * 2,
+                    BLENDFUNCTION {
+                        BlendOp: AC_SRC_OVER as u8,
+                        BlendFlags: 0,
+                        SourceConstantAlpha: alpha,
+                        AlphaFormat: 0,
+                    },
+                );
+                if lh > 500 {
+                    let status = if !s.status.is_empty() {
+                        s.status.as_str()
+                    } else if s.worker.is_some() {
+                        "Working on your account…"
+                    } else if s.sync.is_some() {
+                        "Syncing your account status…"
+                    } else {
+                        if !s.preview && !s.network_allowed {
+                            "Usage paused in this test session"
+                        } else {
+                            "Usage updates automatically · (...) for settings"
+                        }
+                    };
+                    text(
+                        source.dc,
+                        25,
+                        506,
+                        11,
+                        400,
+                        status,
+                        if s.error { 0x009BA7F0 } else { MUTED },
+                        370,
+                    );
+                }
+            }
+        }
+        GdiFlush();
+        let pw = (s.w * s.scale).round().max(1.) as i32;
+        let ph = (s.h * s.scale).round().max(1.) as i32;
+        let output = Surface::new(pw, ph);
+        if output.bits.is_null() {
+            return None;
+        }
+        let src = std::slice::from_raw_parts(source.bits, (source.w * source.h * 4) as usize);
+        let dest = std::slice::from_raw_parts_mut(output.bits, (pw * ph * 4) as usize);
+        let radius = if !s.open && s.settings.circle {
+            let p = ((s.w - CIRCLE) / (320. - CIRCLE)).clamp(0., 1.);
+            (38. - p * 6.) * s.scale
+        } else {
+            (29. + s.reveal * 5.) * s.scale
+        };
+        let hw = pw as f32 / 2.;
+        let hh = ph as f32 / 2.;
+        let radius = radius.min(hw).min(hh);
+        for y in 0..ph {
+            for x in 0..pw {
+                let sx = ((x as f32 + 0.5) * source.w as f32 / pw as f32 - 0.5)
+                    .clamp(0., source.w as f32 - 1.);
+                let sy = ((y as f32 + 0.5) * source.h as f32 / ph as f32 - 0.5)
+                    .clamp(0., source.h as f32 - 1.);
+                let ix = sx as i32;
+                let iy = sy as i32;
+                let tx = sx - ix as f32;
+                let ty = sy - iy as f32;
+                let qx = ((x as f32 + 0.5 - hw).abs() - (hw - radius)).max(0.);
+                let qy = ((y as f32 + 0.5 - hh).abs() - (hh - radius)).max(0.);
+                let alpha = (0.5 - (qx.hypot(qy) - radius)).clamp(0., 1.);
+                let d = ((y * pw + x) * 4) as usize;
+                for c in 0..3 {
+                    let at = |xx: i32, yy: i32| {
+                        src[((yy.min(source.h - 1) * source.w + xx.min(source.w - 1)) * 4) as usize
+                            + c] as f32
+                    };
+                    let top = at(ix, iy) * (1. - tx) + at(ix + 1, iy) * tx;
+                    let bottom = at(ix, iy + 1) * (1. - tx) + at(ix + 1, iy + 1) * tx;
+                    dest[d + c] = ((top * (1. - ty) + bottom * ty) * alpha) as u8;
+                }
+                dest[d + 3] = (alpha * 255.) as u8;
+            }
+        }
+        Some(output)
+    }
+    unsafe fn paint(hwnd: HWND, s: &State) {
+        let mut ps = zeroed();
+        BeginPaint(hwnd, &mut ps);
+        if let Some(output) = render_surface(s) {
+            let position = POINT {
+                x: (s.anchor - output.w as f32 / 2.).round() as i32,
+                y: s.top,
             };
-            clipped_text(
-                mem,
-                46,
-                451,
-                11,
-                400,
-                label,
-                mix(BG, if err { color } else { MUTED }, a),
-                w - 65,
+            let size = SIZE {
+                cx: output.w,
+                cy: output.h,
+            };
+            let origin = POINT { x: 0, y: 0 };
+            UpdateLayeredWindow(
+                hwnd,
+                null_mut(),
+                &position,
+                &size,
+                output.dc,
+                &origin,
+                0,
+                &BLENDFUNCTION {
+                    BlendOp: AC_SRC_OVER as u8,
+                    BlendFlags: 0,
+                    SourceConstantAlpha: 255,
+                    AlphaFormat: AC_SRC_ALPHA as u8,
+                },
+                ULW_ALPHA,
             );
         }
-        if s.focus == 1 {
-            panel(mem, w - 45, 44, 31, 2, 1, GREEN);
-        }
-        SetStretchBltMode(dc, HALFTONE);
-        SetBrushOrgEx(dc, 0, 0, null_mut());
-        StretchBlt(dc, 0, 0, w, h, mem, 0, 0, w * 2, h * 2, SRCCOPY);
-        SelectObject(mem, old);
-        DeleteObject(bmp);
-        DeleteDC(mem);
         EndPaint(hwnd, &ps);
     }
-    unsafe fn shape(hwnd: HWND, s: &State) {
-        let radius = 29 + (s.reveal * 7.) as i32;
-        let r = CreateRoundRectRgn(
-            0,
-            0,
-            s.w.round() as i32 + 1,
-            s.h.round() as i32 + 1,
-            radius * 2,
-            radius * 2,
-        );
-        if !r.is_null() && SetWindowRgn(hwnd, r, 0) == 0 {
-            DeleteObject(r);
+    pub fn export_previews(folder: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+        std::fs::create_dir_all(folder)?;
+        let mut s = initial(true, 0., 0);
+        s.open = true;
+        s.w = EW;
+        s.h = EH;
+        s.reveal = 1.;
+        s.transition = 1.;
+        for name in [
+            "accounts",
+            "preferences",
+            "already-logged-in",
+            "account-name",
+            "circle",
+            "circle-hover",
+            "three-accounts",
+            "small-size",
+        ] {
+            s.open = true;
+            s.w = EW;
+            s.h = EH;
+            s.view = View::Home;
+            s.settings.circle = false;
+            s.scale = 1.;
+            s.previous = None;
+            s.edit_focus = false;
+            s.transition = 1.;
+            s.reveal = 1.;
+            match name{
+                "preferences"=>s.view=View::Preferences,
+                "account-name"=>{s.view=View::Details(0);s.edit="حساب الشغل".encode_utf16().collect();s.caret=s.edit.len();s.edit_focus=true;s.selected=true;},
+                "already-logged-in"=>s.view=View::Notice("Already logged in".into(),"Personal is the account currently logged into Claude. No switch was needed and Claude was left untouched.".into()),
+                "circle"=>{s.open=false;s.settings.circle=true;s.w=CIRCLE;s.h=CIRCLE;},
+                "circle-hover"=>{s.open=false;s.settings.circle=true;s.w=320.;s.h=184.;s.peek=true;},
+                "three-accounts"=>{s.settings.add_account();refresh_slots(&mut s);s.page=1;},
+                "small-size"=>{s.page=0;s.scale=0.75;},
+                _=>{},
+            }
+            let surface = unsafe { render_surface(&s) }
+                .ok_or_else(|| std::io::Error::other("Preview render failed"))?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(surface.bits, (surface.w * surface.h * 4) as usize)
+            };
+            let mut pixels = bytes.to_vec();
+            for pixel in pixels.chunks_exact_mut(4) {
+                let alpha = pixel[3] as u32;
+                for channel in pixel.iter_mut().take(3) {
+                    *channel = (*channel as u32 + 42 * (255 - alpha) / 255).min(255) as u8;
+                }
+                pixel[3] = 255;
+            }
+            let mut file = std::fs::File::create(folder.join(format!("{name}.bmp")))?;
+            file.write_all(b"BM")?;
+            file.write_all(&(54 + pixels.len() as u32).to_le_bytes())?;
+            file.write_all(&[0u8; 4])?;
+            file.write_all(&54u32.to_le_bytes())?;
+            file.write_all(&40u32.to_le_bytes())?;
+            file.write_all(&surface.w.to_le_bytes())?;
+            file.write_all(&(-surface.h).to_le_bytes())?;
+            file.write_all(&1u16.to_le_bytes())?;
+            file.write_all(&32u16.to_le_bytes())?;
+            file.write_all(&[0u8; 24])?;
+            file.write_all(&pixels)?;
+        }
+        Ok(())
+    }
+
+    fn status(s: &mut State, message: impl Into<String>, error: bool) {
+        s.status = message.into();
+        s.error = error;
+        s.status_until = s.clock.elapsed().as_secs_f32() + 6.;
+    }
+    fn persist(s: &mut State) {
+        if !s.preview {
+            if let Err(_) = s.settings.save() {
+                status(s, "Could not save your preferences", true);
+            }
         }
     }
-    unsafe fn start(s: &mut State, id: usize) {
-        run_action(s, id, false);
+    fn navigate(s: &mut State, next: View, backwards: bool) {
+        s.previous = Some(s.view.clone());
+        s.view = next;
+        s.transition = if s.settings.reduced_motion { 1. } else { 0. };
+        s.backwards = backwards;
+        s.edit_focus = false;
+        s.focus = Action::None;
+        s.open = true;
+        s.peek = false;
     }
-    unsafe fn run_action(s: &mut State, id: usize, close_confirmed: bool) {
-        if s.worker.is_some() || s.usage_worker.is_some() {
-            s.status = "Please wait for the current action".into();
-            s.until = s.clock.elapsed().as_secs_f32() + 4.;
+    fn notice(s: &mut State, title: &str, body: impl Into<String>, error: bool) {
+        s.error = error;
+        s.status.clear();
+        navigate(s, View::Notice(title.into(), body.into()), false);
+    }
+    fn refresh_slots(s: &mut State) {
+        s.saved = (0..s.settings.accounts.len())
+            .map(|i| {
+                if s.preview {
+                    true
+                } else {
+                    profiles::saved(i + 1)
+                }
+            })
+            .collect();
+        s.identities = (0..s.settings.accounts.len())
+            .map(|i| {
+                if s.preview {
+                    Some(format!("preview-{i}"))
+                } else {
+                    profiles::account_identity(i + 1).ok()
+                }
+            })
+            .collect();
+        s.usage_errors
+            .resize(s.settings.accounts.len(), String::new());
+    }
+    fn sync(s: &mut State) {
+        if s.sync.is_some() || s.worker.is_some() {
             return;
         }
-        if s.confirmation.is_some() && !close_confirmed {
-            return;
+        let now = s.clock.elapsed().as_secs_f32();
+        s.sync_next = now + 10.;
+        let fetch = now >= s.quota_next && s.network_allowed;
+        if fetch {
+            s.quota_next = now + 300.;
         }
-        s.confirmation = None;
-        s.closing = close_confirmed;
+        let slots = s.identities.clone();
+        let generation = s.generation;
         let preview = s.preview;
-        let protect_local = s.settings.protect_local;
+        let (tx, rx) = mpsc::channel();
+        s.sync = Some(rx);
+        std::thread::spawn(move || {
+            let current = if preview {
+                Some("preview-0".into())
+            } else {
+                usage::current_account_identity().ok()
+            };
+            let active = current
+                .as_ref()
+                .and_then(|id| slots.iter().position(|s| s.as_ref() == Some(id)));
+            let mut samples = Vec::new();
+            if fetch && !preview {
+                for (i, id) in slots.into_iter().enumerate() {
+                    if let Some(id) = id {
+                        samples.push((i, id, usage::fetch(i + 1).map_err(|e| e.to_string())));
+                    }
+                }
+            }
+            let _ = tx.send(SyncResult {
+                generation,
+                active,
+                samples,
+            });
+        });
+    }
+    fn begin(s: &mut State, op: Op, confirmed: bool) {
+        if s.worker.is_some() {
+            status(s, "Please wait for the current action", false);
+            return;
+        }
+        s.generation += 1;
+        s.edit_focus = false;
+        let preview = s.preview;
+        let active = s.active;
+        let protect = s.settings.protect_local;
         let (tx, rx) = mpsc::channel();
         s.worker = Some(rx);
-        s.pending = id;
-        s.started = s.clock.elapsed().as_secs_f32();
-        s.error = false;
-        s.status.clear();
+        s.pending = Some(op);
+        status(
+            s,
+            if confirmed {
+                "Closing Claude, then continuing…"
+            } else {
+                "Checking your account…"
+            },
+            false,
+        );
         std::thread::spawn(move || {
-            let saving = matches!(id, 3 | 5);
-            // Checking on the worker keeps tasklist off the animation thread.
-            if saving && !close_confirmed && (preview || profiles::claude_running()) {
-                let _ = tx.send(Ok(ActionResult::NeedsClose));
-                return;
+            let result = (|| -> Result<Outcome, String> {
+                if let Op::Switch(i) = op {
+                    if (preview && active == Some(i))
+                        || (!preview && profiles::is_current(i + 1).unwrap_or(false))
+                    {
+                        return Ok(Outcome::Already(i));
+                    }
+                }
+                if matches!(op, Op::Save(_) | Op::Switch(_))
+                    && !confirmed
+                    && (preview || profiles::claude_running())
+                {
+                    return Ok(Outcome::NeedsClose(op));
+                }
+                if preview {
+                    return Ok(Outcome::Done(
+                        op,
+                        "Preview complete · no account changes".into(),
+                    ));
+                }
+                if confirmed {
+                    profiles::close_claude_for_save().map_err(|e| e.to_string())?;
+                }
+                match op {
+                    Op::Save(i) => {
+                        profiles::capture(i + 1).map_err(|e| e.to_string())?;
+                        Ok(Outcome::Done(op, "Account saved".into()))
+                    }
+                    Op::Switch(i) => {
+                        profiles::switch(i + 1, protect).map_err(|e| e.to_string())?;
+                        profiles::open_claude();
+                        Ok(Outcome::Done(op, "Switched successfully".into()))
+                    }
+                    Op::Rollback => {
+                        profiles::restore_backup().map_err(|e| e.to_string())?;
+                        Ok(Outcome::Done(op, "Previous sign-in restored".into()))
+                    }
+                    Op::Recover => {
+                        let path = crate::backup::recover_latest().map_err(|e| e.to_string())?;
+                        let _ = std::process::Command::new("explorer.exe").arg(path).spawn();
+                        Ok(Outcome::Done(
+                            op,
+                            "Backup recovered to a separate folder".into(),
+                        ))
+                    }
+                }
+            })();
+            let _ = tx.send(result);
+        });
+    }
+    fn name_save(s: &mut State) {
+        if let View::Details(i) = s.view {
+            match accounts::valid_name(&String::from_utf16_lossy(&s.edit)) {
+                Ok(name) => {
+                    let old = s.settings.accounts[i].name.clone();
+                    s.settings.accounts[i].name = name;
+                    if !s.preview && s.settings.save().is_err() {
+                        s.settings.accounts[i].name = old;
+                        status(s, "Could not save the account name", true);
+                    } else {
+                        navigate(s, View::Home, true);
+                        status(s, "Account name saved", false);
+                    }
+                }
+                Err(e) => status(s, e.to_string(), true),
             }
-            if preview {
-                let _ = tx.send(Ok(ActionResult::Completed(
-                    "Preview complete · no session changes".into(),
-                )));
-                return;
+        }
+    }
+    unsafe fn activate(hwnd: HWND, s: &mut State, a: Action) {
+        match a {
+            Action::None => {}
+            Action::Toggle => {
+                s.open = !s.open;
+                s.peek = false;
+                s.edit_focus = false;
+                if !s.open {
+                    s.view = View::Home;
+                    s.previous = None;
+                    s.transition = 1.;
+                }
             }
-            if close_confirmed {
-                if let Err(e) = profiles::close_claude_for_save() {
-                    let _ = tx.send(Err(e.to_string()));
+            Action::Preferences => navigate(s, View::Preferences, false),
+            Action::Back | Action::Cancel => navigate(s, View::Home, true),
+            Action::Details(i) => {
+                s.edit = s.settings.accounts[i].name.encode_utf16().collect();
+                s.caret = s.edit.len();
+                s.selected = true;
+                navigate(s, View::Details(i), false);
+                s.edit_focus = true;
+            }
+            Action::NameField => {
+                s.edit_focus = true;
+                s.caret = s.edit.len();
+                s.selected = true;
+            }
+            Action::NameSave => name_save(s),
+            Action::Switch(i) => begin(s, Op::Switch(i), false),
+            Action::Save(i) => begin(s, Op::Save(i), false),
+            Action::Confirm => {
+                if let View::Confirm(op) = s.view {
+                    navigate(s, View::Home, true);
+                    begin(s, op, true);
+                }
+            }
+            Action::Add => {
+                if let Some(i) = s.settings.add_account() {
+                    if !s.preview && s.settings.save().is_err() {
+                        s.settings.accounts.pop();
+                        notice(
+                            s,
+                            "Could not add account",
+                            "Preferences could not be saved. No account slot was added.",
+                            true,
+                        );
+                        return;
+                    }
+                    refresh_slots(s);
+                    s.page = i / 2;
+                    s.edit = s.settings.accounts[i].name.encode_utf16().collect();
+                    s.caret = s.edit.len();
+                    s.selected = true;
+                    navigate(s, View::Details(i), false);
+                    s.edit_focus = true;
+                } else {
+                    notice(
+                        s,
+                        "Account slots full",
+                        format!(
+                            "You can save up to {} accounts on this device.",
+                            accounts::MAX_ACCOUNTS
+                        ),
+                        false,
+                    );
+                }
+            }
+            Action::Prev => {
+                s.page = s.page.saturating_sub(1);
+                navigate(s, View::Home, true)
+            }
+            Action::Next => {
+                if (s.page + 1) * 2 < s.settings.accounts.len() {
+                    s.page += 1;
+                    navigate(s, View::Home, false)
+                }
+            }
+            Action::Protect => {
+                s.settings.protect_local = !s.settings.protect_local;
+                persist(s)
+            }
+            Action::Smaller => {
+                s.settings.scale = (s.settings.scale - 0.1).max(0.75);
+                persist(s)
+            }
+            Action::Larger => {
+                s.settings.scale = (s.settings.scale + 0.1).min(1.6);
+                persist(s)
+            }
+            Action::Circle => {
+                s.settings.circle = !s.settings.circle;
+                persist(s)
+            }
+            Action::Motion => {
+                s.settings.reduced_motion = !s.settings.reduced_motion;
+                persist(s)
+            }
+            Action::Rollback => begin(s, Op::Rollback, false),
+            Action::Recover => begin(s, Op::Recover, false),
+            Action::Quit => {
+                if s.worker.is_some() {
+                    status(s, "Wait for the current action before quitting", false)
+                } else {
+                    DestroyWindow(hwnd);
                     return;
                 }
             }
-            if id == 30 {
-                let result = crate::backup::recover_latest()
-                    .map(|path| {
-                        let _ = std::process::Command::new("explorer.exe")
-                            .arg(&path)
-                            .spawn();
-                        ActionResult::Completed("Recovered into a separate folder".into())
-                    })
-                    .map_err(|e| e.to_string());
-                let _ = tx.send(result);
-                return;
-            }
-            let result = if id == 7 {
-                profiles::restore_backup()
-            } else {
-                let account = (id - 2) / 2 + 1;
-                if id % 2 == 1 {
-                    profiles::capture(account)
-                } else {
-                    profiles::switch(account, protect_local)
-                }
-            };
-            let result = result
-                .map(|_| {
-                    if id == 7 {
-                        "Previous session restored".into()
-                    } else if id % 2 == 1 {
-                        format!("Account {} saved", (id - 2) / 2 + 1)
-                    } else {
-                        profiles::open_claude();
-                        format!("Account {} is ready", (id - 2) / 2 + 1)
-                    }
-                })
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result.map(ActionResult::Completed));
-        });
-    }
-    unsafe fn menu(hwnd: HWND, s: &mut State) {
-        let menu = CreatePopupMenu();
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            10,
-            wide("Restore previous session").as_ptr(),
-        );
-        AppendMenuW(
-            menu,
-            MF_STRING | if s.reduced { MF_CHECKED } else { 0 },
-            11,
-            wide("Reduce motion").as_ptr(),
-        );
-        AppendMenuW(menu, MF_SEPARATOR, 0, null_mut());
-        for i in 0..2 {
-            AppendMenuW(
-                menu,
-                MF_STRING,
-                20 + i,
-                wide(&format!(
-                    "{} · name & usage",
-                    s.settings.accounts[i].name.replace('&', "&&")
-                ))
-                .as_ptr(),
-            );
-        }
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            22,
-            wide("Refresh all account usage").as_ptr(),
-        );
-        AppendMenuW(
-            menu,
-            MF_STRING | if s.settings.live_usage { MF_CHECKED } else { 0 },
-            24,
-            wide("Live usage · Anthropic connection").as_ptr(),
-        );
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            25,
-            wide("Recover latest local backup to folder").as_ptr(),
-        );
-        AppendMenuW(menu, MF_SEPARATOR, 0, null_mut());
-        AppendMenuW(menu, MF_STRING, 12, wide("Quit Muisland").as_ptr());
-        let mut p = zeroed();
-        GetCursorPos(&mut p);
-        let choice = TrackPopupMenu(
-            menu,
-            TPM_RETURNCMD | TPM_RIGHTBUTTON,
-            p.x,
-            p.y,
-            0,
-            hwnd,
-            null_mut(),
-        );
-        DestroyMenu(menu);
-        match choice {
-            20 | 21 => open_detail(hwnd, s, (choice - 20) as usize),
-            22 => refresh_usage(s),
-            24 => {
-                if s.settings.live_usage {
-                    s.settings.live_usage = false;
-                    persist(s);
-                } else {
-                    s.usage_consent = true;
-                    s.open = true;
-                    s.focus = 22;
-                    close_detail(s);
-                }
-            }
-            25 => start(s, 30),
-            10 => start(s, 7),
-            11 => s.reduced = !s.reduced,
-            12 => {
-                PostMessageW(hwnd, WM_CLOSE, 0, 0);
-            }
-            _ => {}
-        }
-    }
-    unsafe fn activate(hwnd: HWND, s: &mut State, id: usize) {
-        if id == 22 && s.usage_consent {
-            s.usage_consent = false;
-            s.focus = 0;
-        } else if id == 23 && s.usage_consent {
-            s.usage_consent = false;
-            s.settings.live_usage = true;
-            if persist(s) {
-                refresh_usage(s);
-            }
-            s.focus = 0;
-        } else if id == 8 && s.confirmation.is_some() {
-            s.confirmation = None;
-            s.status = "Cancelled · Claude was left open".into();
-            s.until = s.clock.elapsed().as_secs_f32() + 4.;
-            s.focus = 0;
-        } else if id == 9 {
-            if let Some(pending) = s.confirmation {
-                run_action(s, pending, true);
-                s.focus = 0;
-            }
-        } else {
-            match id {
-                1 => {
-                    s.open = !s.open;
-                    if !s.open {
-                        s.confirmation = None;
-                        s.usage_consent = false;
-                        close_detail(s);
-                        s.focus = 0;
-                    }
-                }
-                2..=5 => start(s, id),
-                10 | 11 => open_detail(hwnd, s, id - 10),
-                12 => {
-                    s.settings.protect_local = !s.settings.protect_local;
-                    persist(s);
-                }
-                13 => refresh_usage(s),
-                14 => save_name(hwnd, s),
-                15 => close_detail(s),
-                6 => menu(hwnd, s),
-                _ => {}
-            }
         }
         InvalidateRect(hwnd, null_mut(), 0);
+    }
+    fn replace_selection(s: &mut State) {
+        if s.selected {
+            s.edit.clear();
+            s.caret = 0;
+            s.selected = false;
+        }
+    }
+    unsafe fn paste(hwnd: HWND, s: &mut State) {
+        if OpenClipboard(hwnd) == 0 {
+            return;
+        }
+        let h = GetClipboardData(13);
+        if !h.is_null() {
+            let ptr = GlobalLock(h) as *const u16;
+            if !ptr.is_null() {
+                let max = (GlobalSize(h) / 2).min(4096);
+                let slice = std::slice::from_raw_parts(ptr, max);
+                let count = slice.iter().position(|x| *x == 0).unwrap_or(max);
+                let content = String::from_utf16_lossy(&slice[..count]);
+                replace_selection(s);
+                for c in content.chars().filter(|c| !c.is_control()).take(32) {
+                    let mut buf = [0; 2];
+                    for u in c.encode_utf16(&mut buf) {
+                        if s.edit.len() < 64 {
+                            s.edit.insert(s.caret, *u);
+                            s.caret += 1;
+                        }
+                    }
+                }
+                GlobalUnlock(h);
+            }
+        }
+        CloseClipboard();
     }
     unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
@@ -1231,250 +1528,263 @@ mod island {
         if msg == WM_DESTROY {
             KillTimer(hwnd, 17);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-            let mut owned = Box::from_raw(ptr);
-            close_detail(&mut owned);
-            if !owned.edit_brush.is_null() {
-                DeleteObject(owned.edit_brush);
-            }
-            drop(owned);
+            drop(Box::from_raw(ptr));
             PostQuitMessage(0);
             return 0;
         }
         let s = &mut *ptr;
         match msg {
-            WM_CTLCOLOREDIT => {
-                let dc = wp as Dc;
-                SetTextColor(dc, WHITE);
-                SetBkColor(dc, 0x00212723);
-                s.edit_brush as LRESULT
-            }
-            WM_APP_NAME => {
-                if wp == 1 {
-                    save_name(hwnd, s);
-                } else {
-                    close_detail(s);
-                }
-                InvalidateRect(hwnd, null_mut(), 0);
-                0
-            }
-            WM_CLOSE if s.worker.is_some() => {
-                s.status = "Please wait for the current action".into();
-                0
-            }
             WM_ERASEBKGND => 1,
             WM_PAINT => {
                 paint(hwnd, s);
                 0
             }
+            WM_CLOSE => {
+                activate(hwnd, s, Action::Quit);
+                0
+            }
+            WM_SETCURSOR => {
+                let mut p = zeroed();
+                GetCursorPos(&mut p);
+                ScreenToClient(hwnd, &mut p);
+                let action = hit(
+                    s,
+                    (p.x as f32 / s.scale) as i32,
+                    (p.y as f32 / s.scale) as i32,
+                );
+                SetCursor(LoadCursorW(
+                    null_mut(),
+                    if action == Action::NameField {
+                        IDC_IBEAM
+                    } else if action != Action::None {
+                        IDC_HAND
+                    } else {
+                        IDC_ARROW
+                    },
+                ));
+                1
+            }
             WM_TIMER => {
                 let now = Instant::now();
                 let dt = now.duration_since(s.last).as_secs_f32().min(0.05);
                 s.last = now;
-                let tw = if s.open { EW } else { CW };
-                let th = if s.open { EH } else { CH };
-                let before = (s.w, s.h, s.reveal, s.hot);
-                if s.reduced {
+                let t = s.clock.elapsed().as_secs_f32();
+                let before = (
+                    s.w,
+                    s.h,
+                    s.scale,
+                    s.reveal,
+                    s.transition,
+                    s.hover,
+                    s.hover_t,
+                    s.peek,
+                );
+                let mut cursor = zeroed();
+                GetCursorPos(&mut cursor);
+                ScreenToClient(hwnd, &mut cursor);
+                let x = cursor.x as f32 / s.scale;
+                let y = cursor.y as f32 / s.scale;
+                let inside = x >= 0. && x < s.w && y >= 0. && y < s.h;
+                if !s.open && s.settings.circle {
+                    if inside && (s.peek || ((x - 38.).powi(2) + (y - 38.).powi(2) < 38f32.powi(2)))
+                    {
+                        s.peek = true;
+                        s.peek_until = t + 0.3;
+                    } else if t > s.peek_until {
+                        s.peek = false;
+                    }
+                }
+                let (tw, th) = if s.open {
+                    (EW, EH)
+                } else if s.settings.circle {
+                    if s.peek {
+                        (320., 184.)
+                    } else {
+                        (CIRCLE, CIRCLE)
+                    }
+                } else {
+                    (PILL_W, PILL_H)
+                };
+                if s.settings.reduced_motion {
                     s.w = tw;
                     s.h = th;
                     s.vw = 0.;
                     s.vh = 0.;
+                    s.scale = s.settings.scale;
                     s.reveal = if s.open { 1. } else { 0. };
+                    s.transition = 1.;
                 } else {
-                    // Integrate in small steps: spring speed is independent of timer jitter.
                     let steps = (dt / 0.004).ceil().max(1.) as usize;
                     let step = dt / steps as f32;
                     for _ in 0..steps {
-                        s.vw += ((tw - s.w) * 360. - s.vw * 31.) * step;
-                        s.vh += ((th - s.h) * 330. - s.vh * 30.) * step;
+                        s.vw += ((tw - s.w) * 360. - s.vw * 32.) * step;
+                        s.vh += ((th - s.h) * 340. - s.vh * 31.) * step;
                         s.w += s.vw * step;
                         s.h += s.vh * step;
                     }
-                    if (s.w - tw).abs() < 0.05 && s.vw.abs() < 0.2 {
+                    if (tw - s.w).abs() < 0.04 && s.vw.abs() < 0.3 {
                         s.w = tw;
                         s.vw = 0.;
                     }
-                    if (s.h - th).abs() < 0.05 && s.vh.abs() < 0.2 {
+                    if (th - s.h).abs() < 0.04 && s.vh.abs() < 0.3 {
                         s.h = th;
                         s.vh = 0.;
                     }
-                    let target = if s.open {
-                        ((s.h - CH) / (EH - CH) * 1.5 - 0.3).clamp(0., 1.)
+                    s.scale += (s.settings.scale - s.scale) * (dt * 14.).min(1.);
+                    if (s.scale - s.settings.scale).abs() < 0.001 {
+                        s.scale = s.settings.scale;
+                    }
+                    let reveal = if s.open {
+                        ((s.h - 58.) / (EH - 58.) * 1.35 - 0.25).clamp(0., 1.)
                     } else {
                         0.
                     };
-                    s.reveal += (target - s.reveal) * (dt * 18.).min(1.);
-                    if (target - s.reveal).abs() < 0.002 {
-                        s.reveal = target;
+                    s.reveal += (reveal - s.reveal) * (dt * 18.).min(1.);
+                    if (reveal - s.reveal).abs() < 0.002 {
+                        s.reveal = reveal;
                     }
+                    s.transition = (s.transition + dt * 4.).min(1.);
                 }
-                let mut cursor = zeroed();
-                GetCursorPos(&mut cursor);
-                ScreenToClient(hwnd, &mut cursor);
-                s.hover = hit(s, cursor.x, cursor.y);
-                for i in 0..24 {
-                    let target = if s.hover == i || s.focus == i { 1. } else { 0. };
-                    s.hot[i] += (target - s.hot[i]) * (dt * 16.).min(1.);
-                    if (s.hot[i] - target).abs() < 0.005 {
-                        s.hot[i] = target;
-                    }
+                if s.transition >= 1. {
+                    s.previous = None;
                 }
-                if (before.0 - s.w).abs() > 0.001 || (before.1 - s.h).abs() > 0.001 {
-                    SetWindowPos(
-                        hwnd,
-                        null_mut(),
-                        (s.anchor - s.w / 2.).round() as i32,
-                        s.top,
-                        s.w.round() as i32,
-                        s.h.round() as i32,
-                        SWP_NOZORDER | SWP_NOACTIVATE,
-                    );
-                    shape(hwnd, s);
+                let hover = hit(s, x as i32, y as i32);
+                if hover != s.hover {
+                    s.hover = hover;
+                    s.hover_t = 0.;
+                }
+                s.hover_t += (1. - s.hover_t) * (dt * 16.).min(1.);
+                if s.hover_t > 0.998 {
+                    s.hover_t = 1.;
                 }
                 let mut changed = false;
-                if let Some(result) = s.usage_worker.as_ref().and_then(|rx| rx.try_recv().ok()) {
-                    s.usage_worker = None;
-                    let any_success = result.iter().any(|(_, r)| r.is_ok());
-                    for (i, result) in result {
+                if let Some(result) = s.sync.as_ref().and_then(|r| r.try_recv().ok()) {
+                    s.sync = None;
+                    if result.generation == s.generation {
+                        s.active = result.active;
+                    }
+                    let mut measurements = false;
+                    for (i, id, result) in result.samples {
+                        if s.identities.get(i).and_then(|i| i.as_ref()) != Some(&id) {
+                            continue;
+                        }
                         match result {
-                            Ok(value) => {
-                                s.settings.accounts[i].usage = Some(value);
+                            Ok(u) => {
+                                s.settings.accounts[i].usage = Some(u);
                                 s.usage_errors[i].clear();
+                                measurements = true
                             }
-                            Err(error) => s.usage_errors[i] = error,
+                            Err(e) => s.usage_errors[i] = e,
                         }
                     }
-                    if !s.preview {
-                        persist(s);
+                    if measurements {
+                        persist(s)
                     }
-                    s.status = if any_success {
-                        "Account usage updated"
-                    } else {
-                        "Usage unavailable · open account details"
-                    }
-                    .into();
-                    s.error = !any_success;
-                    s.until = s.clock.elapsed().as_secs_f32() + 4.;
                     changed = true;
                 }
-                let minute = accounts::now() / 60;
-                if minute != s.minute {
-                    s.minute = minute;
-                    changed = true;
-                }
-                if s.settings.live_usage
-                    && s.clock.elapsed().as_secs_f32() >= s.usage_next
-                    && s.usage_worker.is_none()
-                    && s.worker.is_none()
-                {
-                    refresh_usage(s);
-                }
-
-                if s.clock.elapsed().as_secs_f32() - s.started > 0.45 {
-                    if let Some(result) = s.worker.as_ref().and_then(|r| r.try_recv().ok()) {
-                        s.worker = None;
-                        s.closing = false;
-                        s.until = s.clock.elapsed().as_secs_f32() + 6.;
-                        match result {
-                            Ok(ActionResult::NeedsClose) => {
-                                s.confirmation = Some(s.pending);
-                                s.open = true;
-                                s.status.clear();
-                                s.focus = 8; // Cancel is the safe default for Enter.
-                            }
-                            Ok(ActionResult::Completed(message)) => {
-                                s.status = message;
-                                if matches!(s.pending, 2 | 4) {
-                                    s.active = (s.pending - 2) / 2 + 1;
-                                }
-                                if matches!(s.pending, 3 | 5) {
-                                    let i = (s.pending - 2) / 2;
-                                    s.settings.accounts[i].usage = None;
-                                    s.usage_errors[i].clear();
-                                    if !s.preview {
-                                        persist(s);
-                                    }
-                                    s.usage_next = s.clock.elapsed().as_secs_f32() + 1.;
-                                }
-                                if !s.preview {
-                                    s.saved = [profiles::saved(1), profiles::saved(2)];
-                                }
-                            }
-                            Err(message) => {
-                                s.error = true;
-                                s.status = "Action could not be completed".into();
-                                MessageBoxW(
-                                    hwnd,
-                                    wide(&message).as_ptr(),
-                                    wide("Muisland").as_ptr(),
-                                    MB_OK | MB_ICONINFORMATION,
-                                );
-                            }
+                if let Some(result) = s.worker.as_ref().and_then(|r| r.try_recv().ok()) {
+                    s.worker = None;
+                    s.pending = None;
+                    match result {
+                        Ok(Outcome::Already(i)) => {
+                            s.active = Some(i);
+                            notice(s,"Already logged in",format!("{} is the account currently logged into Claude. No switch was needed and Claude was left untouched.",s.settings.accounts[i].name),false)
                         }
-                        changed = true;
+                        Ok(Outcome::NeedsClose(op)) => {
+                            s.status.clear();
+                            navigate(s, View::Confirm(op), false);
+                            s.focus = Action::Cancel;
+                        }
+                        Ok(Outcome::Done(op, label)) => {
+                            if let Op::Save(i) = op {
+                                s.settings.accounts[i].usage = None;
+                                s.usage_errors[i].clear();
+                                persist(s);
+                            }
+                            if let Op::Switch(i) = op {
+                                s.active = Some(i);
+                            }
+                            refresh_slots(s);
+                            s.quota_next = 0.;
+                            s.sync_next = 0.;
+                            navigate(s, View::Home, true);
+                            status(s, label, false);
+                        }
+                        Err(e) => notice(s, "Couldn't finish this action", e, true),
                     }
+                    changed = true;
                 }
-                if !s.status.is_empty() && s.clock.elapsed().as_secs_f32() > s.until {
+                if t >= s.sync_next {
+                    sync(s)
+                }
+                if !s.status.is_empty() && t > s.status_until {
                     s.status.clear();
                     s.error = false;
                     changed = true;
                 }
-                if before != (s.w, s.h, s.reveal, s.hot) || s.worker.is_some() || changed {
+                let second = accounts::now();
+                if second != s.last_second {
+                    s.last_second = second;
+                    changed = true;
+                }
+                if before
+                    != (
+                        s.w,
+                        s.h,
+                        s.scale,
+                        s.reveal,
+                        s.transition,
+                        s.hover,
+                        s.hover_t,
+                        s.peek,
+                    )
+                    || changed
+                    || s.edit_focus
+                {
                     InvalidateRect(hwnd, null_mut(), 0);
                 }
                 0
             }
             WM_LBUTTONDOWN => {
-                let (x, y) = xy(lp);
-                s.down = Some((x, y));
+                let (x, y) = point(lp, s.scale);
+                let action = hit(s, x, y);
+                s.down = Some((x, y, action));
                 s.drag = false;
-                s.focus = 0;
-                if y < 58 && x < s.w as i32 - 92 {
+                s.focus = Action::None;
+                if y < 58 && x < if s.open { EW as i32 - 100 } else { 120 } {
                     let mut p = zeroed();
                     GetCursorPos(&mut p);
-                    let mut r = zeroed();
-                    GetWindowRect(hwnd, &mut r);
-                    s.origin = (p.x - r.left, p.y - r.top);
+                    s.origin = (p.x - (s.anchor - s.w * s.scale / 2.) as i32, p.y - s.top);
                     SetCapture(hwnd);
                 }
+                InvalidateRect(hwnd, null_mut(), 0);
                 0
             }
             WM_MOUSEMOVE => {
-                if let Some((dx, dy)) = s.down {
-                    let (x, y) = xy(lp);
+                if let Some((dx, dy, _)) = s.down {
+                    let (x, y) = point(lp, s.scale);
                     if dy < 58
-                        && dx < s.w as i32 - 92
+                        && dx < if s.open { EW as i32 - 100 } else { 120 }
                         && ((x - dx).abs() > 4 || (y - dy).abs() > 4 || s.drag)
                     {
                         s.drag = true;
                         let mut p = zeroed();
                         GetCursorPos(&mut p);
-                        let left = p.x - s.origin.0;
+                        s.anchor = (p.x - s.origin.0) as f32 + s.w * s.scale / 2.;
                         s.top = p.y - s.origin.1;
-                        s.anchor = left as f32 + s.w / 2.;
-                        SetWindowPos(
-                            hwnd,
-                            null_mut(),
-                            left,
-                            s.top,
-                            0,
-                            0,
-                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
+                        InvalidateRect(hwnd, null_mut(), 0);
                     }
                 }
                 0
             }
             WM_LBUTTONUP => {
                 let down = s.down.take();
-                let dragged = s.drag;
+                let drag = s.drag;
                 ReleaseCapture();
-                let (x, y) = xy(lp);
-                if let Some((dx, dy)) = down {
-                    if !dragged && (x - dx).abs() < 8 && (y - dy).abs() < 8 {
-                        let id = hit(s, x, y);
-                        if id == hit(s, dx, dy) {
-                            activate(hwnd, s, id);
-                        }
+                let (x, y) = point(lp, s.scale);
+                if let Some((dx, dy, action)) = down {
+                    if !drag && (x - dx).abs() < 8 && (y - dy).abs() < 8 && hit(s, x, y) == action {
+                        activate(hwnd, s, action);
                     }
                 }
                 s.drag = false;
@@ -1486,217 +1796,314 @@ mod island {
                 0
             }
             WM_RBUTTONUP => {
-                menu(hwnd, s);
-                0
-            }
-            WM_KEYDOWN => {
-                match wp as u32 {
-                    0x1B => {
-                        if s.usage_consent {
-                            activate(hwnd, s, 22);
-                        } else if s.detail.is_some() {
-                            close_detail(s);
-                        } else if s.confirmation.is_some() {
-                            activate(hwnd, s, 8);
-                        } else {
-                            s.open = false;
-                            s.focus = 1;
-                        }
-                    }
-                    0x09 => {
-                        s.focus = if s.usage_consent {
-                            if s.focus == 22 {
-                                23
-                            } else {
-                                22
-                            }
-                        } else if s.detail.is_some() {
-                            match s.focus {
-                                13 => 14,
-                                14 => 15,
-                                _ => 13,
-                            }
-                        } else if s.confirmation.is_some() {
-                            if s.focus == 8 {
-                                9
-                            } else {
-                                8
-                            }
-                        } else if s.open {
-                            match s.focus {
-                                1 => 2,
-                                2 => 3,
-                                3 => 10,
-                                10 => 4,
-                                4 => 5,
-                                5 => 11,
-                                11 => 12,
-                                12 => 6,
-                                _ => 1,
-                            }
-                        } else {
-                            1
-                        };
-                    }
-                    0x0D | 0x20 => activate(hwnd, s, s.focus.max(1)),
-                    _ => {}
-                }
+                navigate(s, View::Preferences, false);
                 InvalidateRect(hwnd, null_mut(), 0);
                 0
             }
-            WM_KILLFOCUS => {
-                s.focus = 0;
+            WM_CHAR => {
+                if s.edit_focus {
+                    let c = wp as u16;
+                    if c == 8 {
+                        replace_selection(s);
+                        if s.caret > 0 {
+                            s.caret -= 1;
+                            let low = s.edit.remove(s.caret);
+                            if (0xDC00..=0xDFFF).contains(&low) && s.caret > 0 {
+                                s.caret -= 1;
+                                s.edit.remove(s.caret);
+                            }
+                        }
+                    } else if c >= 32 && c != 127 && s.edit.len() < 64 {
+                        replace_selection(s);
+                        s.edit.insert(s.caret, c);
+                        s.caret += 1;
+                    }
+                    InvalidateRect(hwnd, null_mut(), 0);
+                }
+                0
+            }
+            WM_KEYDOWN => {
+                let control = GetKeyState(0x11) < 0;
+                let key = wp as u32;
+                if s.edit_focus && control && key == 0x41 {
+                    s.selected = true;
+                } else if s.edit_focus && control && key == 0x56 {
+                    paste(hwnd, s);
+                } else if key == 0x1B {
+                    if s.open && !matches!(s.view, View::Home) {
+                        navigate(s, View::Home, true)
+                    } else {
+                        s.open = false;
+                        s.peek = false;
+                        s.edit_focus = false;
+                    }
+                } else if s.edit_focus && key == 0x0D {
+                    name_save(s)
+                } else if s.edit_focus && key == 0x24 {
+                    s.caret = 0;
+                    s.selected = false;
+                } else if s.edit_focus && key == 0x23 {
+                    s.caret = s.edit.len();
+                    s.selected = false;
+                } else if s.edit_focus && key == 0x25 {
+                    s.caret = s.caret.saturating_sub(1);
+                    s.selected = false;
+                } else if s.edit_focus && key == 0x27 {
+                    s.caret = (s.caret + 1).min(s.edit.len());
+                    s.selected = false;
+                } else if s.edit_focus && key == 0x2E {
+                    if s.selected {
+                        replace_selection(s)
+                    } else if s.caret < s.edit.len() {
+                        s.edit.remove(s.caret);
+                    }
+                } else if key == 0x09 {
+                    s.edit_focus = false;
+                    let b = buttons(s);
+                    let current = b.iter().position(|b| b.action == s.focus);
+                    if !b.is_empty() {
+                        s.focus = b[current.map(|i| (i + 1) % b.len()).unwrap_or(0)].action;
+                    }
+                } else if (key == 0x0D || key == 0x20) && !s.edit_focus {
+                    let a = if s.focus == Action::None {
+                        if matches!(s.view, View::Confirm(_)) {
+                            Action::Cancel
+                        } else {
+                            Action::Toggle
+                        }
+                    } else {
+                        s.focus
+                    };
+                    activate(hwnd, s, a);
+                }
                 InvalidateRect(hwnd, null_mut(), 0);
                 0
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
     }
+    fn initial(preview: bool, anchor: f32, top: i32) -> State {
+        let now = Instant::now();
+        let mut settings = if preview {
+            Settings::default()
+        } else {
+            Settings::load().unwrap_or_default()
+        };
+        if preview {
+            settings.accounts[0].name = "Personal".into();
+            settings.accounts[1].name = "Work".into();
+            for i in 0..2 {
+                settings.accounts[i].usage = Some(Usage {
+                    session: Some(Window {
+                        used: if i == 0 { 28. } else { 82. },
+                        resets: Some(accounts::now() + 7200),
+                    }),
+                    weekly: Some(Window {
+                        used: 46.,
+                        resets: Some(accounts::now() + 86400 * 3),
+                    }),
+                    updated: accounts::now(),
+                    plan: "Demo".into(),
+                });
+            }
+        }
+        let circle = settings.circle;
+        let scale = settings.scale;
+        let mut s = State {
+            settings,
+            saved: Vec::new(),
+            identities: Vec::new(),
+            usage_errors: Vec::new(),
+            active: if preview { Some(0) } else { None },
+            page: 0,
+            open: preview,
+            peek: false,
+            peek_until: 0.,
+            w: if circle { CIRCLE } else { PILL_W },
+            h: if circle { CIRCLE } else { PILL_H },
+            vw: 0.,
+            vh: 0.,
+            scale,
+            anchor,
+            top,
+            view: View::Home,
+            previous: None,
+            transition: 1.,
+            backwards: false,
+            reveal: 0.,
+            hover: Action::None,
+            hover_t: 0.,
+            focus: Action::None,
+            down: None,
+            drag: false,
+            origin: (0, 0),
+            edit: Vec::new(),
+            caret: 0,
+            selected: false,
+            edit_focus: false,
+            status: String::new(),
+            status_until: 0.,
+            error: false,
+            pending: None,
+            worker: None,
+            sync: None,
+            sync_next: 0.,
+            quota_next: 0.,
+            generation: 0,
+            clock: now,
+            last: now,
+            last_second: accounts::now(),
+            preview,
+            network_allowed: !preview && !std::env::args().any(|a| a == "--no-network"),
+        };
+        refresh_slots(&mut s);
+        s
+    }
     pub fn run() {
         unsafe {
             SetProcessDPIAware();
-            let name = wide("MuislandWindow");
-            let existing = FindWindowW(name.as_ptr(), null_mut());
+            let class = wide("MuislandWindow");
+            let existing = FindWindowW(class.as_ptr(), null());
             if !existing.is_null() {
                 SetForegroundWindow(existing);
                 return;
             }
-            let inst = GetModuleHandleW(null_mut());
+            let instance = GetModuleHandleW(null());
             let wc = WNDCLASSW {
                 lpfnWndProc: Some(wndproc),
-                hInstance: inst,
+                hInstance: instance,
                 hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-                lpszClassName: name.as_ptr(),
+                lpszClassName: class.as_ptr(),
                 ..zeroed()
             };
             if RegisterClassW(&wc) == 0 {
                 return;
             }
-            let mut work: RECT = zeroed();
-            SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut RECT).cast(), 0);
-            let anchor = (work.left + work.right) as f32 / 2.;
-            let top = work.top + 20;
+            let mut area: RECT = zeroed();
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut area as *mut RECT).cast(), 0);
             let preview = std::env::args().any(|a| a == "--preview");
+            let s = Box::new(initial(
+                preview,
+                (area.left + area.right) as f32 / 2.,
+                area.top + 20,
+            ));
             let hwnd = CreateWindowExW(
                 WS_EX_TOPMOST
+                    | WS_EX_LAYERED
                     | if preview {
                         WS_EX_APPWINDOW
                     } else {
                         WS_EX_TOOLWINDOW
                     },
-                name.as_ptr(),
+                class.as_ptr(),
                 wide("Muisland").as_ptr(),
                 WS_POPUP,
-                (anchor - CW / 2.) as i32,
-                top,
-                CW as i32,
-                CH as i32,
+                (s.anchor - s.w * s.scale / 2.) as i32,
+                s.top,
+                (s.w * s.scale) as i32,
+                (s.h * s.scale) as i32,
                 null_mut(),
                 null_mut(),
-                inst,
-                null_mut(),
+                instance,
+                null(),
             );
             if hwnd.is_null() {
                 return;
             }
-            let now = Instant::now();
-            let mut settings = if preview {
-                Settings::default()
-            } else {
-                Settings::load().unwrap_or_default()
-            };
-            if preview {
-                settings.accounts[0].name = "Personal".into();
-                settings.accounts[1].name = "Work".into();
-                for i in 0..2 {
-                    settings.accounts[i].usage = Some(Usage {
-                        session: Some(Window {
-                            used: if i == 0 { 28. } else { 82. },
-                            resets: Some(accounts::now() + 7200),
-                        }),
-                        weekly: Some(Window {
-                            used: if i == 0 { 46. } else { 65. },
-                            resets: Some(accounts::now() + 86400 * 3),
-                        }),
-                        updated: accounts::now(),
-                        plan: "Demo".into(),
-                    });
-                }
-            }
-            let s = Box::new(State {
-                open: preview,
-                w: CW,
-                h: CH,
-                vw: 0.,
-                vh: 0.,
-                reveal: 0.,
-                hover: 0,
-                hot: [0.; 24],
-                focus: 0,
-                down: None,
-                drag: false,
-                origin: (0, 0),
-                anchor,
-                top,
-                saved: if preview {
-                    [true, true]
-                } else {
-                    [profiles::saved(1), profiles::saved(2)]
-                },
-                active: 0,
-                status: String::new(),
-                error: false,
-                until: 0.,
-                worker: None,
-                pending: 0,
-                confirmation: None,
-                closing: false,
-                started: 0.,
-                clock: now,
-                last: now,
-                reduced: false,
-                preview,
-                settings,
-                detail: None,
-                name_edit: null_mut(),
-                name_font: null_mut(),
-                edit_brush: CreateSolidBrush(0x00212723),
-                usage_worker: None,
-                usage_errors: std::array::from_fn(|_| String::new()),
-                usage_next: 0.,
-                usage_consent: false,
-                minute: accounts::now() / 60,
-            });
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(s) as isize);
-            let s = &*(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const State);
-            shape(hwnd, s);
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             SetTimer(hwnd, 17, 16, None);
-            let mut m: MSG = zeroed();
-            while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
-                let state = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State);
-                if !state.name_edit.is_null()
-                    && m.hwnd == state.name_edit
-                    && m.message == WM_KEYDOWN
-                {
-                    if m.wParam == 0x0D || m.wParam == 0x1B {
-                        SendMessageW(hwnd, WM_APP_NAME, if m.wParam == 0x0D { 1 } else { 0 }, 0);
-                        continue;
-                    }
-                    if m.wParam == 0x09 {
-                        state.focus = 14;
-                        SetFocus(hwnd);
-                        InvalidateRect(hwnd, null_mut(), 0);
-                        continue;
-                    }
-                }
-                TranslateMessage(&m);
-                DispatchMessageW(&m);
+            InvalidateRect(hwnd, null_mut(), 0);
+            let mut message: MSG = zeroed();
+            while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
             }
+        }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn account_hit_targets_are_not_limited_to_two() {
+            let mut s = initial(true, 0., 0);
+            for _ in 0..4 {
+                s.settings.add_account();
+            }
+            refresh_slots(&mut s);
+            s.page = 2;
+            s.open = true;
+            s.transition = 1.;
+            s.reveal = 1.;
+            assert_eq!(hit(&s, 80, 150), Action::Switch(4));
+            assert_eq!(hit(&s, 350, 150), Action::Save(4));
+            assert_eq!(hit(&s, 307, 274), Action::Details(5));
+        }
+        #[test]
+        fn rounded_window_uses_transparent_antialiased_edges_without_a_stroke() {
+            let mut s = initial(true, 0., 0);
+            s.w = EW;
+            s.h = EH;
+            s.open = true;
+            s.reveal = 1.;
+            let surface = unsafe { render_surface(&s) }.unwrap();
+            let bytes = unsafe {
+                std::slice::from_raw_parts(surface.bits, (surface.w * surface.h * 4) as usize)
+            };
+            assert_eq!(bytes[3], 0);
+            assert_eq!(
+                bytes[((surface.h / 2 * surface.w + surface.w / 2) * 4 + 3) as usize],
+                255
+            );
+            assert!(bytes.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255));
+        }
+        #[test]
+        fn selecting_current_account_never_requests_a_close_or_switch() {
+            let mut s = initial(true, 0., 0);
+            begin(&mut s, Op::Switch(0), false);
+            let result = s
+                .worker
+                .take()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            assert!(matches!(result, Outcome::Already(0)));
+        }
+        #[test]
+        fn another_account_requires_close_confirmation_before_changes() {
+            let mut s = initial(true, 0., 0);
+            begin(&mut s, Op::Switch(1), false);
+            let result = s
+                .worker
+                .take()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            assert!(matches!(result, Outcome::NeedsClose(Op::Switch(1))));
         }
     }
 }
 #[cfg(windows)]
 fn main() {
+    if std::env::args().any(|a| a == "--check-usage") {
+        match usage::fetch_current() {
+            Ok(u) => println!("{}", u.to_cache()),
+            Err(e) => {
+                eprintln!("Usage check: {e}");
+                std::process::exit(1)
+            }
+        }
+        return;
+    }
+    if std::env::args().any(|a| a == "--render-previews") {
+        let folder = std::env::args().nth(2).unwrap_or_else(|| "preview".into());
+        if let Err(e) = island::export_previews(std::path::Path::new(&folder)) {
+            eprintln!("Preview render: {e}");
+            std::process::exit(1)
+        }
+        return;
+    }
     island::run();
 }

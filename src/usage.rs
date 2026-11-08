@@ -298,6 +298,11 @@ fn select_token(cache: &Value, uuid: &str) -> Option<Credential> {
                     .split_whitespace()
                     .any(|s| s == "user:profile")
                 && v["token"].is_string()
+                && v["expiresAt"]
+                    .as_u64()
+                    .map(|n| if n > 100_000_000_000 { n / 1000 } else { n })
+                    .or_else(|| v["expiresAt"].as_str().and_then(parse_time))
+                    .is_none_or(|t| t > accounts::now() + 15)
         })
         .min_by_key(|(k, _)| k.len())
         .and_then(|(_, v)| {
@@ -486,6 +491,36 @@ fn request(token: &str) -> io::Result<Value> {
         }
         serde_json::from_slice(&body).map_err(|_| io::Error::other("Unexpected usage response"))
     }
+}
+fn current_credential() -> io::Result<(String, Credential)> {
+    let dir = profiles::find_claude()?;
+    let auth: Value = serde_json::from_slice(&fs::read(dir.join("config.json"))?)
+        .map_err(|_| io::Error::other("Could not read Claude account"))?;
+    let local: Value = serde_json::from_slice(&fs::read(dir.join("Local State"))?)
+        .map_err(|_| io::Error::other("Could not read Claude encryption key"))?;
+    let uuid = auth["lastKnownAccountUuid"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| io::Error::other("Claude is not signed in"))?;
+    for field in ["oauth:tokenCacheV2", "oauth:tokenCache"] {
+        if let Some(encrypted) = auth[field].as_str() {
+            if let Ok(cache) = decrypt_cache(encrypted, &local) {
+                if let Some(credential) = select_token(&cache, uuid) {
+                    return Ok((uuid.into(), credential));
+                }
+            }
+        }
+    }
+    Err(io::Error::other("Claude's current sign-in is unavailable"))
+}
+pub fn current_account_identity() -> io::Result<String> {
+    current_credential().map(|(id, _)| id)
+}
+pub fn fetch_current() -> io::Result<Usage> {
+    let (_, mut c) = current_credential()?;
+    let result = request(&c.token).and_then(|v| Usage::parse(&v, c.plan.clone()));
+    c.token.clear();
+    result
 }
 pub fn fetch(index: usize) -> io::Result<Usage> {
     let mut c = credential(index)?;
