@@ -68,3 +68,8 @@ Buttons use measured Segoe UI text metrics, balanced padding, consistent rounded
 
 The latest preview-window checks verified centered button labels, independent 110% menu / 80% floating scales through collapse and reopen, and removing a simulated account while preserving the remaining account. No real account was removed in verification.
 
+
+## Header and switch confirmation
+
+Clicking anywhere in the open header collapses the island; the explicit (...) settings button keeps opening Preferences. Dragging the left header still moves the window rather than triggering a click.
+Selecting a different account always opens **Switch account?** inside the island, even when Claude is already closed. Only **Confirm switch** proceeds; it closes Claude first if necessary. Cancel, Escape, or collapsing the header abandons the prompt without switching. Enter defaults to Cancel. Selecting the current account still reports **Already logged in** without closing or changing Claude.

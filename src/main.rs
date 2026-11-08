@@ -68,6 +68,7 @@ mod island {
         Preferences,
         Notice(String, String),
         Confirm(Op),
+        SwitchConfirm(usize),
         Remove(usize, String),
     }
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -115,6 +116,7 @@ mod island {
     enum Outcome {
         Done(Op, String),
         NeedsClose(Op),
+        NeedsSwitch(usize),
         Already(usize),
     }
     struct SyncResult {
@@ -330,6 +332,7 @@ mod island {
             add(Action::Toggle, 0, 0, s.w as i32, s.h as i32);
             return b;
         }
+        add(Action::Toggle, 0, 0, EW as i32, 58);
         add(Action::Preferences, EW as i32 - 88, 12, 32, 34);
         add(Action::Toggle, EW as i32 - 46, 12, 32, 34);
         if s.transition < 0.9 || s.reveal < 0.9 {
@@ -379,7 +382,7 @@ mod island {
                 add(Action::RemoveConfirm, 156, 312, 240, 42);
             }
             View::Notice(_, _) => add(Action::Back, 24, 410, 372, 42),
-            View::Confirm(_) => {
+            View::Confirm(_) | View::SwitchConfirm(_) => {
                 add(Action::Cancel, 24, 312, 120, 42);
                 add(Action::Confirm, 156, 312, 240, 42)
             }
@@ -931,6 +934,32 @@ mod island {
                 paragraph(dc, 25, 180, body, if s.error { 0x009BA7F0 } else { MUTED });
                 button(dc, s, Action::Back, 24, 410, 372, 42, "Got it", true)
             }
+            View::SwitchConfirm(index) => {
+                text(dc, 24, 89, 24, 600, "Switch account?", WHITE, 372);
+                text(
+                    dc,
+                    25,
+                    136,
+                    16,
+                    600,
+                    &s.settings.accounts[*index].name,
+                    GREEN,
+                    365,
+                );
+                paragraph(dc,25,180,"Confirm to open this saved account. If Claude is running, it will close first. Local tasks may stop and unsaved work may be lost.",MUTED);
+                button(dc, s, Action::Cancel, 24, 312, 120, 42, "Cancel", false);
+                button(
+                    dc,
+                    s,
+                    Action::Confirm,
+                    156,
+                    312,
+                    240,
+                    42,
+                    "Confirm switch",
+                    true,
+                );
+            }
             View::Confirm(op) => {
                 let saving = matches!(op, Op::Save(_));
                 text(
@@ -1444,6 +1473,9 @@ mod island {
                     {
                         return Ok(Outcome::Already(i));
                     }
+                    if !confirmed {
+                        return Ok(Outcome::NeedsSwitch(i));
+                    }
                 }
                 if matches!(op, Op::Save(_) | Op::Switch(_))
                     && !confirmed
@@ -1623,7 +1655,12 @@ mod island {
             Action::Switch(i) => begin(s, Op::Switch(i), false),
             Action::Save(i) => begin(s, Op::Save(i), false),
             Action::Confirm => {
-                if let View::Confirm(op) = s.view {
+                let operation = match s.view {
+                    View::Confirm(op) => Some(op),
+                    View::SwitchConfirm(i) => Some(Op::Switch(i)),
+                    _ => None,
+                };
+                if let Some(op) = operation {
                     navigate(s, View::Home, true);
                     begin(s, op, true);
                 }
@@ -1929,6 +1966,11 @@ mod island {
                             s.active = Some(i);
                             notice(s,"Already logged in",format!("{} is the account currently logged into Claude. No switch was needed and Claude was left untouched.",s.settings.accounts[i].name),false)
                         }
+                        Ok(Outcome::NeedsSwitch(i)) => {
+                            s.status.clear();
+                            navigate(s, View::SwitchConfirm(i), false);
+                            s.focus = Action::Cancel;
+                        }
                         Ok(Outcome::NeedsClose(op)) => {
                             s.status.clear();
                             navigate(s, View::Confirm(op), false);
@@ -2105,7 +2147,10 @@ mod island {
                     }
                 } else if (key == 0x0D || key == 0x20) && !s.edit_focus {
                     let a = if s.focus == Action::None {
-                        if matches!(s.view, View::Confirm(_) | View::Remove(_, _)) {
+                        if matches!(
+                            s.view,
+                            View::Confirm(_) | View::SwitchConfirm(_) | View::Remove(_, _)
+                        ) {
                             Action::Cancel
                         } else {
                             Action::Toggle
@@ -2362,6 +2407,29 @@ mod island {
             assert!(matches!(result, Outcome::Already(0)));
         }
         #[test]
+        fn all_header_areas_collapse_except_the_settings_control() {
+            let mut s = initial(true, 0., 0);
+            s.reveal = 1.;
+            s.transition = 1.;
+            for (x, y) in [(18, 22), (105, 28), (220, 35), (300, 12), (413, 50)] {
+                assert_eq!(hit(&s, x, y), Action::Toggle);
+            }
+            assert_eq!(hit(&s, 347, 29), Action::Preferences);
+        }
+        #[test]
+        fn switch_only_proceeds_after_confirmation_in_preview() {
+            let mut s = initial(true, 0., 0);
+            begin(&mut s, Op::Switch(1), true);
+            let result = s
+                .worker
+                .take()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            assert!(matches!(result, Outcome::Done(Op::Switch(1), _)));
+        }
+        #[test]
         fn another_account_requires_close_confirmation_before_changes() {
             let mut s = initial(true, 0., 0);
             begin(&mut s, Op::Switch(1), false);
@@ -2372,7 +2440,7 @@ mod island {
                 .recv_timeout(std::time::Duration::from_secs(2))
                 .unwrap()
                 .unwrap();
-            assert!(matches!(result, Outcome::NeedsClose(Op::Switch(1))));
+            assert!(matches!(result, Outcome::NeedsSwitch(1)));
         }
     }
 }
