@@ -12,6 +12,7 @@
 /muisland-settings.bin
 /local-backups/
 /removed-accounts/
+/saved-versions/
 /recovered/
 auth.json
 .env

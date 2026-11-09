@@ -14,7 +14,7 @@ This builds the app, copies `Muisland.exe` to the project root, and launches it.
 
 ## Account controls
 
-- Sign in to Claude Desktop, then choose **Save** on the intended account slot. If Claude is running, the island asks for **Close & save**, warning that local tasks and unsaved work may be interrupted.
+- Sign in to Claude Desktop, then choose **Save** on the intended account slot. If Claude is running, the island asks for **Close & save**. It requests the app's normal Exit/Quit action, waits for Desktop to stop, saves, then reopens the same app. It never force-kills Claude or unrelated Claude Code processes. If Claude stays in the tray, quit it normally and retry.
 - Click a saved account to open **Switch account?**, then choose **Confirm switch**. Confirmation is required even if Claude is already closed. If needed, confirming closes Claude first.
 - Selecting the account already logged into Claude shows **Already logged in**, without closing or changing Claude.
 - **Cancel**, Escape, or collapsing the header abandons a displayed confirmation.
@@ -55,6 +55,7 @@ Data remains under `%LOCALAPPDATA%\ClaudeIsland` for compatibility:
 - `muisland-settings.bin`: encrypted names, quota cache, and preferences.
 - `local-backups`: encrypted local checkpoints.
 - `removed-accounts`: archived snapshots from removed entries.
+- `saved-versions`: previous encrypted snapshots retained before a successful replacement.
 - `recovered`: separately decrypted checkpoint output.
 
 Windows DPAPI ties encryption to the current Windows user. It does not protect against software running as that user. Filesystem restore is best effort rather than transactional.
@@ -75,3 +76,13 @@ Offline builds require dependencies to be cached. Tests cover account identity i
 - `Muisland.exe --check-usage`: read-only diagnostic printing parsed quota data for the current account, never credentials.
 
 Generated binaries, `target`, previews, and local data are ignored by Git. Curated documentation images can be kept separately under `docs` if needed.
+
+## Session-safe saving and screen limits
+
+Saving validates the local signed-in account before closure and again before replacing a slot. If login data is missing or the account changed, the existing slot remains intact. Snapshot replacement retains the previous encrypted copy and attempts rollback on installation failure. Claude is reopened after the capture attempt even if capture failed, so the user can finish signing in. A login revoked by Claude itself cannot be recreated by a local backup.
+
+Relaunching reuses the running app's Windows application identity or executable, including Microsoft Store activation, instead of assuming the `claude://` association points to the same installation. Closing uses native Exit/Quit menu commands with WM_CLOSE as a fallback; no taskkill /F is used. Save operations never write to Claude's active authentication files.
+
+Dragging, expansion, hover, and size changes keep the whole island inside the nearest monitor's usable work area with an 8-pixel margin. Menus that exceed a small display fit automatically. Monitor removal, resolution changes, and taskbar/work-area changes re-check the bounds. Negative-coordinate secondary monitors are supported.
+
+The close/reopen sequence and snapshot rollback are verified with offline tests rather than terminating a live user session. Screen clamping is tested at each edge, on a secondary monitor, and with oversized menus.

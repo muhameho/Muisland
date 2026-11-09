@@ -149,45 +149,214 @@ pub fn find_claude() -> io::Result<PathBuf> {
     ))
 }
 
-// Called only after the user chooses Close & save inside the island.
-// Never capture until all Claude processes are confirmed stopped.
-pub fn close_claude_for_save() -> io::Result<()> {
-    use std::os::windows::process::CommandExt;
-    use std::time::{Duration, Instant};
-    if !claude_running() {
-        return Ok(());
-    }
-    let result = Command::new("taskkill")
-        .args(["/IM", "Claude.exe", "/T", "/F"])
-        .creation_flags(0x08000000)
-        .output()?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if !claude_running() {
-            return Ok(());
+#[derive(Clone)]
+pub enum LaunchTarget {
+    Store(String),
+    Executable(PathBuf),
+    Uri,
+}
+impl LaunchTarget {
+    pub fn open(&self) -> io::Result<()> {
+        match self {
+            Self::Store(id) => {
+                Command::new("explorer.exe")
+                    .arg(format!("shell:AppsFolder\\{id}"))
+                    .spawn()?;
+            }
+            Self::Executable(path) => {
+                Command::new(path).spawn()?;
+            }
+            Self::Uri => {
+                Command::new("explorer.exe").arg("claude://").spawn()?;
+            }
         }
-        if !result.status.success() || Instant::now() >= deadline {
-            return Err(io::Error::other("Claude could not be closed. Nothing was saved. Close Claude manually and try again."));
-        }
-        std::thread::sleep(Duration::from_millis(200));
+        Ok(())
     }
 }
-
-pub fn claude_running() -> bool {
-    use std::os::windows::process::CommandExt;
-    if let Ok(out) = Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq Claude.exe", "/NH"])
-        .creation_flags(0x08000000)
-        .output()
-    {
-        if !out.status.success() {
-            return true;
+fn is_desktop_executable(path: &Path) -> bool {
+    let p = path.to_string_lossy().to_lowercase();
+    ![
+        "\\claude-code\\",
+        "\\.claude\\",
+        "\\.local\\bin\\",
+        "\\node_modules\\",
+        "\\roaming\\npm\\",
+    ]
+    .iter()
+    .any(|part| p.contains(part))
+}
+fn desktop_processes() -> io::Result<Vec<(u32, PathBuf)>> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{Diagnostics::ToolHelp::*, Threading::*},
+    };
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
         }
-        let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        return s.lines().any(|l| l.trim_start().starts_with("claude.exe"));
+        let result = (|| {
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let mut processes = Vec::new();
+            let mut found = Process32FirstW(snapshot, &mut entry);
+            while found != 0 {
+                let end = entry
+                    .szExeFile
+                    .iter()
+                    .position(|c| *c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                if String::from_utf16_lossy(&entry.szExeFile[..end])
+                    .eq_ignore_ascii_case("claude.exe")
+                {
+                    let process =
+                        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID);
+                    if process.is_null() {
+                        return Err(io::Error::other("Cannot inspect a Claude process. Close Claude Desktop manually before retrying."));
+                    }
+                    let mut name = vec![0u16; 32768];
+                    let mut count = name.len() as u32;
+                    let ok = QueryFullProcessImageNameW(process, 0, name.as_mut_ptr(), &mut count);
+                    CloseHandle(process);
+                    if ok == 0 {
+                        return Err(io::Error::other("Cannot identify a Claude process safely."));
+                    }
+                    let path = PathBuf::from(String::from_utf16_lossy(&name[..count as usize]));
+                    if is_desktop_executable(&path) {
+                        processes.push((entry.th32ProcessID, path));
+                    }
+                }
+                found = Process32NextW(snapshot, &mut entry);
+            }
+            Ok(processes)
+        })();
+        CloseHandle(snapshot);
+        result
     }
-    // Fail closed if process status can't be determined.
-    true
+}
+pub fn claude_launch_target() -> LaunchTarget {
+    use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::*};
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetApplicationUserModelId(
+            process: *mut core::ffi::c_void,
+            length: *mut u32,
+            id: *mut u16,
+        ) -> i32;
+    }
+    if let Ok(processes) = desktop_processes() {
+        for (pid, path) in processes {
+            unsafe {
+                let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                if !process.is_null() {
+                    let mut n = 0;
+                    GetApplicationUserModelId(process, &mut n, std::ptr::null_mut());
+                    if n > 1 && n < 4096 {
+                        let mut id = vec![0; n as usize];
+                        let ok = GetApplicationUserModelId(process, &mut n, id.as_mut_ptr());
+                        CloseHandle(process);
+                        if ok == 0 {
+                            let length = id.iter().position(|c| *c == 0).unwrap_or(id.len());
+                            return LaunchTarget::Store(String::from_utf16_lossy(&id[..length]));
+                        }
+                    } else {
+                        CloseHandle(process);
+                    }
+                }
+            }
+            return LaunchTarget::Executable(path);
+        }
+    }
+    if let Ok(dir) = find_claude() {
+        if dir
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("claude_pzs8sxrjxfjjc")
+        {
+            return LaunchTarget::Store("Claude_pzs8sxrjxfjjc!Claude".into());
+        }
+    }
+    LaunchTarget::Uri
+}
+unsafe fn quit_menu_command(
+    menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    depth: u32,
+) -> Option<u32> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    if menu.is_null() || depth > 8 {
+        return None;
+    }
+    for position in 0..GetMenuItemCount(menu) {
+        let mut label = [0u16; 256];
+        let count = GetMenuStringW(
+            menu,
+            position as u32,
+            label.as_mut_ptr(),
+            label.len() as i32,
+            MF_BYPOSITION,
+        );
+        let name = String::from_utf16_lossy(&label[..count.max(0) as usize]).replace('&', "");
+        let name = name.split('\t').next().unwrap_or("").trim().to_lowercase();
+        let id = GetMenuItemID(menu, position);
+        if [
+            "exit",
+            "quit",
+            "exit claude",
+            "quit claude",
+            "خروج",
+            "إنهاء",
+        ]
+        .contains(&name.as_str())
+            && id != u32::MAX
+        {
+            return Some(id);
+        }
+        if let Some(command) = quit_menu_command(GetSubMenu(menu, position), depth + 1) {
+            return Some(command);
+        }
+    }
+    None
+}
+pub fn close_claude_for_save() -> io::Result<()> {
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::{Foundation::*, UI::WindowsAndMessaging::*};
+    let processes = desktop_processes()?;
+    if processes.is_empty() {
+        return Ok(());
+    }
+    let ids = processes.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    unsafe extern "system" fn close_window(hwnd: HWND, data: LPARAM) -> BOOL {
+        let ids = &*(data as *const Vec<u32>);
+        let mut pid = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if ids.contains(&pid) {
+            if let Some(command) = quit_menu_command(GetMenu(hwnd), 0) {
+                PostMessageW(hwnd, WM_COMMAND, command as WPARAM, 0);
+            } else if IsWindowVisible(hwnd) != 0 {
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            }
+        }
+        1
+    }
+    unsafe {
+        EnumWindows(Some(close_window), (&ids as *const Vec<u32>) as LPARAM);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if desktop_processes()?.is_empty() {
+            std::thread::sleep(Duration::from_millis(350));
+            if desktop_processes()?.is_empty() {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::other("Claude is still running, possibly in the system tray. Choose File > Exit or Quit Claude, then retry. Muisland did not force-close it or save over your account."));
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+pub fn claude_running() -> bool {
+    desktop_processes().map(|p| !p.is_empty()).unwrap_or(true)
 }
 fn check_closed() -> io::Result<()> {
     if claude_running() {
@@ -360,19 +529,41 @@ pub fn saved(index: usize) -> bool {
         .map(|p| p.join("auth.json").is_file())
         .unwrap_or(false)
 }
-pub fn capture(index: usize) -> io::Result<()> {
+pub fn capture(index: usize, expected_identity: &str) -> io::Result<()> {
     if !(1..=crate::accounts::MAX_ACCOUNTS).contains(&index) {
         return Err(io::Error::other("Invalid account"));
     }
     check_closed()?;
+    let identity=crate::usage::current_account_identity().map_err(|_|io::Error::other("Claude's signed-in session is not available on disk. Your existing saved account was kept. Sign in to Claude again, let it finish loading, then retry."))?;
+    if identity != expected_identity {
+        return Err(io::Error::other("Claude's account changed while closing. Your existing saved account was kept; sign in and retry."));
+    }
     let source = find_claude()?;
     let dest = account_dir(index)?;
     let stage = dest.with_extension("stage");
     save_snapshot(&source, &stage)?;
-    if dest.exists() {
-        fs::remove_dir_all(&dest)?;
+    install_snapshot(&stage, &dest, &base()?.join("saved-versions"), index)?;
+    Ok(())
+}
+fn install_snapshot(stage: &Path, dest: &Path, versions: &Path, index: usize) -> io::Result<()> {
+    let archived = if dest.exists() {
+        fs::create_dir_all(versions)?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let previous = versions.join(format!("account-{index}-{stamp}"));
+        fs::rename(&dest, &previous)?;
+        Some(previous)
+    } else {
+        None
+    };
+    if let Err(error) = fs::rename(&stage, &dest) {
+        if let Some(previous) = archived {
+            let _ = fs::rename(previous, &dest);
+        }
+        return Err(error);
     }
-    fs::rename(stage, dest)?;
     Ok(())
 }
 pub fn switch(index: usize, protect_local: bool) -> io::Result<()> {
@@ -415,7 +606,114 @@ pub fn restore_backup() -> io::Result<()> {
     }
     restore_snapshot(&backup, &find_claude()?)
 }
-pub fn open_claude() {
-    // AppUserModelID varies across releases. Use the app URI association as best effort.
-    let _ = Command::new("explorer.exe").arg("claude://").spawn();
+
+fn finish_save(
+    save: impl FnOnce() -> io::Result<()>,
+    reopen: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    let saved = save();
+    let opened = reopen();
+    match (saved, opened) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(e), Ok(())) => Err(e),
+        (Ok(()), Err(_)) => Err(io::Error::other(
+            "Account saved, but Claude could not be reopened. Open Claude manually.",
+        )),
+        (Err(e), Err(_)) => Err(io::Error::other(format!(
+            "{e} Open Claude manually to continue."
+        ))),
+    }
+}
+pub fn save_and_reopen(index: usize, expected: &str, target: &LaunchTarget) -> io::Result<()> {
+    finish_save(|| capture(index, expected), || target.open())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn save_reopens_claude_on_success_and_on_capture_failure() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        assert!(finish_save(
+            || {
+                events.borrow_mut().push("save");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("reopen");
+                Ok(())
+            }
+        )
+        .is_ok());
+        assert_eq!(*events.borrow(), ["save", "reopen"]);
+        events.borrow_mut().clear();
+        assert!(finish_save(
+            || {
+                events.borrow_mut().push("save");
+                Err(io::Error::other("No valid session"))
+            },
+            || {
+                events.borrow_mut().push("reopen");
+                Ok(())
+            }
+        )
+        .is_err());
+        assert_eq!(*events.borrow(), ["save", "reopen"]);
+    }
+    #[test]
+    fn replacing_a_snapshot_preserves_old_copy_and_failed_install_rolls_back() {
+        let root = std::env::temp_dir().join(format!(
+            "muisland-save-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let dest = root.join("account");
+        let stage = root.join("stage");
+        let versions = root.join("versions");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("auth.bin"), b"old").unwrap();
+        fs::create_dir(&stage).unwrap();
+        fs::write(stage.join("auth.bin"), b"new").unwrap();
+        install_snapshot(&stage, &dest, &versions, 1).unwrap();
+        assert_eq!(fs::read(dest.join("auth.bin")).unwrap(), b"new");
+        let archived = fs::read_dir(&versions)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(fs::read(archived.join("auth.bin")).unwrap(), b"old");
+        assert!(install_snapshot(&root.join("missing"), &dest, &versions, 1).is_err());
+        assert_eq!(fs::read(dest.join("auth.bin")).unwrap(), b"new");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn desktop_process_filter_excludes_bundled_and_user_cli() {
+        assert!(is_desktop_executable(Path::new(
+            r"C:\Program Files\WindowsApps\Claude_4\app\Claude.exe"
+        )));
+        assert!(!is_desktop_executable(Path::new(
+            r"C:\Users\me\AppData\Local\Claude-Data\claude-code\2\claude.exe"
+        )));
+        assert!(!is_desktop_executable(Path::new(
+            r"C:\Users\me\.local\bin\claude.exe"
+        )));
+    }
+    #[test]
+    fn quit_menu_never_selects_sign_out() {
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::*;
+            let menu = CreatePopupMenu();
+            let label = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+            AppendMenuW(menu, MF_STRING, 10, label("Sign out").as_ptr());
+            AppendMenuW(menu, MF_STRING, 11, label("Exit fullscreen").as_ptr());
+            AppendMenuW(menu, MF_STRING, 12, label("E&xit\tAlt+F4").as_ptr());
+            assert_eq!(quit_menu_command(menu, 0), Some(12));
+            DestroyMenu(menu);
+        }
+    }
 }

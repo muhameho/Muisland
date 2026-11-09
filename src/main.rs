@@ -170,6 +170,87 @@ mod island {
         last_second: u64,
         preview: bool,
         network_allowed: bool,
+        work_areas: Vec<RECT>,
+    }
+    unsafe fn available_work_areas() -> Vec<RECT> {
+        unsafe extern "system" fn collect(
+            monitor: HMONITOR,
+            _dc: HDC,
+            _rect: *mut RECT,
+            data: LPARAM,
+        ) -> BOOL {
+            let areas = &mut *(data as *mut Vec<RECT>);
+            let mut info: MONITORINFO = zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) != 0
+                && info.rcWork.right > info.rcWork.left
+                && info.rcWork.bottom > info.rcWork.top
+            {
+                areas.push(info.rcWork);
+            }
+            1
+        }
+        let mut areas = Vec::new();
+        EnumDisplayMonitors(
+            null_mut(),
+            null(),
+            Some(collect),
+            (&mut areas as *mut Vec<RECT>) as LPARAM,
+        );
+        if areas.is_empty() {
+            let mut rect: RECT = zeroed();
+            if SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut rect as *mut RECT).cast(), 0) != 0 {
+                areas.push(rect);
+            }
+        }
+        areas
+    }
+    fn bounded_geometry(
+        areas: &[RECT],
+        anchor: f32,
+        top: i32,
+        w: f32,
+        h: f32,
+        scale: f32,
+    ) -> (f32, i32, f32) {
+        let cy = top as f32 + h * scale / 2.;
+        let distance = |r: &RECT| {
+            let dx = (r.left as f32 - anchor)
+                .max(0.)
+                .max(anchor - r.right as f32);
+            let dy = (r.top as f32 - cy).max(0.).max(cy - r.bottom as f32);
+            dx * dx + dy * dy
+        };
+        let Some(area) = areas
+            .iter()
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))
+        else {
+            return (anchor, top, scale);
+        };
+        let margin = 8
+            .min((area.right - area.left).max(0) / 4)
+            .min((area.bottom - area.top).max(0) / 4);
+        let left = area.left + margin;
+        let right = area.right - margin;
+        let upper = area.top + margin;
+        let bottom = area.bottom - margin;
+        let fit = scale
+            .min((right - left).max(1) as f32 / w.max(1.))
+            .min((bottom - upper).max(1) as f32 / h.max(1.));
+        let pw = (w * fit).round().max(1.) as i32;
+        let ph = (h * fit).round().max(1.) as i32;
+        let x = (anchor - pw as f32 / 2.)
+            .round()
+            .clamp(left as f32, (right - pw).max(left) as f32);
+        let y = top.clamp(upper, (bottom - ph).max(upper));
+        (x + pw as f32 / 2., y, fit)
+    }
+    fn constrain(s: &mut State) {
+        let (anchor, top, scale) =
+            bounded_geometry(&s.work_areas, s.anchor, s.top, s.w, s.h, s.scale);
+        s.anchor = anchor;
+        s.top = top;
+        s.scale = scale;
     }
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(Some(0)).collect()
@@ -1489,17 +1570,24 @@ mod island {
                         "Preview complete · no account changes".into(),
                     ));
                 }
+                let launch = profiles::claude_launch_target();
+                let expected = if matches!(op, Op::Save(_)) {
+                    Some(usage::current_account_identity().map_err(|_|"Claude's signed-in session is not ready on disk. Finish signing in and let Claude load before saving. Your previous saved account was kept.".to_string())?)
+                } else {
+                    None
+                };
                 if confirmed {
                     profiles::close_claude_for_save().map_err(|e| e.to_string())?;
                 }
                 match op {
                     Op::Save(_) => {
-                        profiles::capture(slot).map_err(|e| e.to_string())?;
-                        Ok(Outcome::Done(op, "Account saved".into()))
+                        profiles::save_and_reopen(slot, expected.as_deref().unwrap_or(""), &launch)
+                            .map_err(|e| e.to_string())?;
+                        Ok(Outcome::Done(op, "Account saved · Claude reopened".into()))
                     }
                     Op::Switch(_) => {
                         profiles::switch(slot, protect).map_err(|e| e.to_string())?;
-                        profiles::open_claude();
+                        launch.open().map_err(|_|"Account switched, but Claude could not reopen. Open Claude manually.".to_string())?;
                         Ok(Outcome::Done(op, "Switched successfully".into()))
                     }
                     Op::Rollback => {
@@ -1795,6 +1883,12 @@ mod island {
         }
         let s = &mut *ptr;
         match msg {
+            WM_DISPLAYCHANGE | WM_SETTINGCHANGE => {
+                s.work_areas = available_work_areas();
+                constrain(s);
+                InvalidateRect(hwnd, null_mut(), 0);
+                0
+            }
             WM_ERASEBKGND => 1,
             WM_PAINT => {
                 paint(hwnd, s);
@@ -1830,6 +1924,7 @@ mod island {
                 let dt = now.duration_since(s.last).as_secs_f32().min(0.05);
                 s.last = now;
                 let t = s.clock.elapsed().as_secs_f32();
+                let before_position = (s.anchor, s.top);
                 let before = (
                     s.w,
                     s.h,
@@ -1929,7 +2024,9 @@ mod island {
                 if s.hover_t > 0.998 {
                     s.hover_t = 1.;
                 }
-                let mut changed = old_page_fade != s.page_fade;
+                constrain(s);
+                let mut changed =
+                    old_page_fade != s.page_fade || before_position != (s.anchor, s.top);
                 if let Some(result) = s.sync.as_ref().and_then(|r| r.try_recv().ok()) {
                     s.sync = None;
                     if result.generation == s.generation {
@@ -2053,6 +2150,7 @@ mod island {
                         GetCursorPos(&mut p);
                         s.anchor = (p.x - s.origin.0) as f32 + s.w * s.scale / 2.;
                         s.top = p.y - s.origin.1;
+                        constrain(s);
                         InvalidateRect(hwnd, null_mut(), 0);
                     }
                 }
@@ -2243,6 +2341,7 @@ mod island {
             last_second: accounts::now(),
             preview,
             network_allowed: !preview && !std::env::args().any(|a| a == "--no-network"),
+            work_areas: Vec::new(),
         };
         refresh_slots(&mut s);
         s
@@ -2270,11 +2369,13 @@ mod island {
             let mut area: RECT = zeroed();
             SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut area as *mut RECT).cast(), 0);
             let preview = std::env::args().any(|a| a == "--preview");
-            let s = Box::new(initial(
+            let mut s = Box::new(initial(
                 preview,
                 (area.left + area.right) as f32 / 2.,
                 area.top + 20,
             ));
+            s.work_areas = available_work_areas();
+            constrain(&mut s);
             let hwnd = CreateWindowExW(
                 WS_EX_TOPMOST
                     | WS_EX_LAYERED
@@ -2405,6 +2506,47 @@ mod island {
                 .unwrap()
                 .unwrap();
             assert!(matches!(result, Outcome::Already(0)));
+        }
+        #[test]
+        fn island_cannot_be_dragged_outside_any_monitor_work_area() {
+            let areas = [
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1040,
+                },
+                RECT {
+                    left: -1280,
+                    top: 0,
+                    right: 0,
+                    bottom: 984,
+                },
+            ];
+            for (anchor, top) in [(-9000., -4000), (9000., 6000), (-900., 50), (1850., 1000)] {
+                let (a, y, k) = bounded_geometry(&areas, anchor, top, 420., 536., 1.6);
+                let width = (420. * k).round() as i32;
+                let height = (536. * k).round() as i32;
+                let x = (a - width as f32 / 2.).round() as i32;
+                assert!(areas.iter().any(|r| x >= r.left + 8
+                    && x + width <= r.right - 8
+                    && y >= r.top + 8
+                    && y + height <= r.bottom - 8));
+            }
+        }
+        #[test]
+        fn oversized_menu_fits_and_removed_monitor_recovers() {
+            let areas = [RECT {
+                left: 0,
+                top: 40,
+                right: 800,
+                bottom: 600,
+            }];
+            let (a, y, k) = bounded_geometry(&areas, -1600., -500, 420., 536., 1.6);
+            assert!(k < 1.6);
+            assert!(y >= 48);
+            assert!(y + (536. * k).round() as i32 <= 592);
+            assert!(a >= 8.);
         }
         #[test]
         fn all_header_areas_collapse_except_the_settings_control() {
