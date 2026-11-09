@@ -138,6 +138,8 @@ mod island {
         open: bool,
         peek: bool,
         peek_until: f32,
+        bubble: HWND,
+        bubble_alpha: f32,
         w: f32,
         h: f32,
         vw: f32,
@@ -1157,9 +1159,8 @@ mod island {
         }
         source.clear();
         if !s.open && s.settings.circle {
-            let p = ((s.w - CIRCLE) / (320. - CIRCLE)).clamp(0., 1.);
-            let cx = 38. + p * 14.;
-            let cy = 38. + p * 54.;
+            let cx = s.w / 2.;
+            let cy = s.h / 2.;
             let account = s.active.and_then(|i| s.settings.accounts.get(i));
             let u = account.and_then(|a| a.usage.as_ref());
             let used = u
@@ -1167,28 +1168,6 @@ mod island {
                 .map(|w| w.used);
             ring(source.dc, cx, cy, 27., used);
             mark(source.dc, cx as i32 - 9, cy as i32 - 9, 18, WHITE);
-            if p > 0.3 {
-                let name = account
-                    .map(|a| a.name.as_str())
-                    .unwrap_or("No linked account");
-                text(source.dc, 98, 31, 16, 600, name, WHITE, 205);
-                quota(
-                    source.dc,
-                    98,
-                    57,
-                    194,
-                    "5h",
-                    u.and_then(|u| u.session.as_ref()),
-                );
-                quota(
-                    source.dc,
-                    98,
-                    110,
-                    194,
-                    "7d",
-                    u.and_then(|u| u.weekly.as_ref()),
-                );
-            }
         } else {
             panel(source.dc, 16, 14, 30, 30, 15, 0x0026352D);
             mark(source.dc, 24, 22, 14, GREEN);
@@ -1283,24 +1262,36 @@ mod island {
                 }
             }
         }
+        let radius = if !s.open && s.settings.circle {
+            s.w.min(s.h) / 2.
+        } else {
+            29. + s.reveal * 5.
+        };
+        compose(&source, s.w, s.h, s.scale, |x, y| {
+            rounded_alpha(x, y, 0., 0., s.w, s.h, radius)
+        })
+    }
+    fn rounded_alpha(x: f32, y: f32, left: f32, top: f32, w: f32, h: f32, r: f32) -> f32 {
+        let qx = (x - left - w / 2.).abs() - (w / 2. - r);
+        let qy = (y - top - h / 2.).abs() - (h / 2. - r);
+        (0.5 - (qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - r)).clamp(0., 1.)
+    }
+    unsafe fn compose(
+        source: &Surface,
+        w: f32,
+        h: f32,
+        scale: f32,
+        mask: impl Fn(f32, f32) -> f32,
+    ) -> Option<Surface> {
         GdiFlush();
-        let pw = (s.w * s.scale).round().max(1.) as i32;
-        let ph = (s.h * s.scale).round().max(1.) as i32;
+        let pw = (w * scale).round().max(1.) as i32;
+        let ph = (h * scale).round().max(1.) as i32;
         let output = Surface::new(pw, ph);
         if output.bits.is_null() {
             return None;
         }
         let src = std::slice::from_raw_parts(source.bits, (source.w * source.h * 4) as usize);
         let dest = std::slice::from_raw_parts_mut(output.bits, (pw * ph * 4) as usize);
-        let radius = if !s.open && s.settings.circle {
-            let p = ((s.w - CIRCLE) / (320. - CIRCLE)).clamp(0., 1.);
-            (38. - p * 6.) * s.scale
-        } else {
-            (29. + s.reveal * 5.) * s.scale
-        };
-        let hw = pw as f32 / 2.;
-        let hh = ph as f32 / 2.;
-        let radius = radius.min(hw).min(hh);
         for y in 0..ph {
             for x in 0..pw {
                 let sx = ((x as f32 + 0.5) * source.w as f32 / pw as f32 - 0.5)
@@ -1311,9 +1302,7 @@ mod island {
                 let iy = sy as i32;
                 let tx = sx - ix as f32;
                 let ty = sy - iy as f32;
-                let qx = ((x as f32 + 0.5 - hw).abs() - (hw - radius)).max(0.);
-                let qy = ((y as f32 + 0.5 - hh).abs() - (hh - radius)).max(0.);
-                let alpha = (0.5 - (qx.hypot(qy) - radius)).clamp(0., 1.);
+                let alpha = mask((x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale);
                 let d = ((y * pw + x) * 4) as usize;
                 for c in 0..3 {
                     let at = |xx: i32, yy: i32| {
@@ -1329,6 +1318,201 @@ mod island {
         }
         Some(output)
     }
+    const BUBBLE_OPEN: u32 = WM_APP + 42;
+    const BUBBLE_W: f32 = 306.;
+    const BUBBLE_H: f32 = 188.;
+    #[derive(Debug)]
+    struct BubblePlacement {
+        x: i32,
+        y: i32,
+        scale: f32,
+        right: bool,
+        tail: f32,
+    }
+    fn bubble_placement(
+        areas: &[RECT],
+        cx: f32,
+        top: i32,
+        diameter: f32,
+        requested: f32,
+    ) -> Option<BubblePlacement> {
+        let cy = top as f32 + diameter / 2.;
+        let area = areas.iter().min_by(|a, b| {
+            let dist = |r: &RECT| {
+                (cx - cx.clamp(r.left as f32, r.right as f32)).powi(2)
+                    + (cy - cy.clamp(r.top as f32, r.bottom as f32)).powi(2)
+            };
+            dist(a).total_cmp(&dist(b))
+        })?;
+        let left = area.left as f32 + 8.;
+        let right = area.right as f32 - 8.;
+        let upper = area.top as f32 + 8.;
+        let bottom = area.bottom as f32 - 8.;
+        let gap = 8.;
+        let room_right = (right - cx - diameter / 2. - gap).max(1.);
+        let room_left = (cx - diameter / 2. - gap - left).max(1.);
+        let preferred_right = cx < (left + right) / 2.;
+        let right_side = if preferred_right {
+            room_right >= BUBBLE_W * requested || room_right >= room_left
+        } else {
+            !(room_left >= BUBBLE_W * requested || room_left >= room_right)
+        };
+        let scale = requested
+            .min(if right_side { room_right } else { room_left } / BUBBLE_W)
+            .min((bottom - upper).max(1.) / BUBBLE_H)
+            .max(0.01);
+        let w = (BUBBLE_W * scale).round();
+        let h = (BUBBLE_H * scale).round();
+        let x = if right_side {
+            cx + diameter / 2. + gap
+        } else {
+            cx - diameter / 2. - gap - w
+        };
+        let y = (cy - h / 2.).clamp(upper, (bottom - h).max(upper));
+        Some(BubblePlacement {
+            x: x.round() as i32,
+            y: y.round() as i32,
+            scale,
+            right: right_side,
+            tail: ((cy - y) / scale).clamp(30., BUBBLE_H - 30.),
+        })
+    }
+    unsafe fn render_bubble(s: &State, scale: f32, right: bool, tail: f32) -> Option<Surface> {
+        let source = Surface::new(BUBBLE_W as i32 * 2, BUBBLE_H as i32 * 2);
+        if source.bits.is_null() {
+            return None;
+        }
+        let brush = CreateSolidBrush(PANEL);
+        FillRect(
+            source.dc,
+            &RECT {
+                left: 0,
+                top: 0,
+                right: source.w,
+                bottom: source.h,
+            },
+            brush,
+        );
+        DeleteObject(brush);
+        let inset = if right { 10 } else { 0 };
+        let account = s.active.and_then(|i| s.settings.accounts.get(i));
+        let u = account.and_then(|a| a.usage.as_ref());
+        text(
+            source.dc,
+            inset + 20,
+            17,
+            17,
+            600,
+            account
+                .map(|a| a.name.as_str())
+                .unwrap_or("No linked account"),
+            WHITE,
+            252,
+        );
+        let caption = u
+            .map(|u| {
+                format!(
+                    "{} · {}",
+                    u.plan,
+                    if s.preview {
+                        "Sample usage"
+                    } else {
+                        "Live usage"
+                    }
+                )
+            })
+            .unwrap_or_else(|| "Usage not available yet".into());
+        text(source.dc, inset + 20, 43, 10, 400, &caption, MUTED, 252);
+        line(
+            source.dc,
+            &[(inset + 20, 65), (inset + 276, 65)],
+            1,
+            0x002A332D,
+        );
+        quota(
+            source.dc,
+            inset + 20,
+            77,
+            256,
+            "5h",
+            u.and_then(|u| u.session.as_ref()),
+        );
+        quota(
+            source.dc,
+            inset + 20,
+            131,
+            256,
+            "7d",
+            u.and_then(|u| u.weekly.as_ref()),
+        );
+        compose(&source, BUBBLE_W, BUBBLE_H, scale, |x, y| {
+            let body = rounded_alpha(x, y, inset as f32, 0., 296., BUBBLE_H, 22.);
+            let depth = if right { x } else { BUBBLE_W - x };
+            // Symmetric triangle overlaps the body to avoid a hairline seam.
+            let triangle = ((depth - (y - tail).abs()) / 2f32.sqrt() + 0.5).clamp(0., 1.)
+                * (12.5 - depth).clamp(0., 1.);
+            body.max(triangle)
+        })
+    }
+    unsafe fn paint_bubble(s: &State) {
+        if s.bubble.is_null() {
+            return;
+        }
+        if s.open || s.drag || s.down.is_some() || !s.settings.circle || s.bubble_alpha <= 0.01 {
+            ShowWindow(s.bubble, SW_HIDE);
+            return;
+        }
+        let Some(p) = bubble_placement(
+            &s.work_areas,
+            s.anchor,
+            s.top,
+            s.w * s.scale,
+            s.settings.float_scale,
+        ) else {
+            return;
+        };
+        if let Some(output) = render_bubble(s, p.scale, p.right, p.tail) {
+            UpdateLayeredWindow(
+                s.bubble,
+                null_mut(),
+                &POINT { x: p.x, y: p.y },
+                &SIZE {
+                    cx: output.w,
+                    cy: output.h,
+                },
+                output.dc,
+                &POINT { x: 0, y: 0 },
+                0,
+                &BLENDFUNCTION {
+                    BlendOp: AC_SRC_OVER as u8,
+                    BlendFlags: 0,
+                    SourceConstantAlpha: (s.bubble_alpha * 255.) as u8,
+                    AlphaFormat: AC_SRC_ALPHA as u8,
+                },
+                ULW_ALPHA,
+            );
+            ShowWindow(s.bubble, SW_SHOWNOACTIVATE);
+        }
+    }
+    unsafe extern "system" fn bubble_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        match msg {
+            WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
+            WM_LBUTTONUP => {
+                let owner = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as HWND;
+                if !owner.is_null() {
+                    PostMessageW(owner, BUBBLE_OPEN, 0, 0);
+                }
+                0
+            }
+            WM_SETCURSOR => {
+                SetCursor(LoadCursorW(null_mut(), IDC_HAND));
+                1
+            }
+            WM_ERASEBKGND => 1,
+            _ => DefWindowProcW(hwnd, msg, wp, lp),
+        }
+    }
+
     unsafe fn paint(hwnd: HWND, s: &State) {
         let mut ps = zeroed();
         BeginPaint(hwnd, &mut ps);
@@ -1359,6 +1543,7 @@ mod island {
                 ULW_ALPHA,
             );
         }
+        paint_bubble(s);
         EndPaint(hwnd, &ps);
     }
     pub fn export_previews(folder: &std::path::Path) -> std::io::Result<()> {
@@ -1378,6 +1563,7 @@ mod island {
             "remove-account",
             "circle",
             "circle-hover",
+            "circle-hover-left",
             "three-accounts",
             "small-size",
         ] {
@@ -1397,13 +1583,36 @@ mod island {
                 "account-name"=>{s.view=View::Details(0);s.edit="حساب الشغل".encode_utf16().collect();s.caret=s.edit.len();s.edit_focus=true;s.selected=true;},
                 "already-logged-in"=>s.view=View::Notice("Already logged in".into(),"Personal is the account currently logged into Claude. No switch was needed and Claude was left untouched.".into()),
                 "circle"=>{s.open=false;s.settings.circle=true;s.w=CIRCLE;s.h=CIRCLE;},
-                "circle-hover"=>{s.open=false;s.settings.circle=true;s.w=320.;s.h=184.;s.peek=true;},
+                "circle-hover" | "circle-hover-left"=>{s.open=false;s.settings.circle=true;s.w=CIRCLE;s.h=CIRCLE;s.peek=true;},
                 "three-accounts"=>{s.settings.add_account();refresh_slots(&mut s);s.page=1;},
                 "small-size"=>{s.page=0;s.scale=0.75;},
                 _=>{},
             }
-            let surface = unsafe { render_surface(&s) }
-                .ok_or_else(|| std::io::Error::other("Preview render failed"))?;
+            let surface = unsafe {
+                if name.starts_with("circle-hover") {
+                    let right = name == "circle-hover";
+                    let circle = render_surface(&s).unwrap();
+                    let card = render_bubble(&s, 1., right, 94.).unwrap();
+                    let board = Surface::new(390, 188);
+                    std::ptr::write_bytes(board.bits, 0, (board.w * board.h * 4) as usize);
+                    for (image, x, y) in [
+                        (&circle, if right { 0 } else { 314 }, 56),
+                        (&card, if right { 84 } else { 0 }, 0),
+                    ] {
+                        for row in 0..image.h {
+                            std::ptr::copy_nonoverlapping(
+                                image.bits.add((row * image.w * 4) as usize),
+                                board.bits.add(((row + y) * board.w * 4 + x * 4) as usize),
+                                (image.w * 4) as usize,
+                            );
+                        }
+                    }
+                    Some(board)
+                } else {
+                    render_surface(&s)
+                }
+            }
+            .ok_or_else(|| std::io::Error::other("Preview render failed"))?;
             let bytes = unsafe {
                 std::slice::from_raw_parts(surface.bits, (surface.w * surface.h * 4) as usize)
             };
@@ -1905,12 +2114,21 @@ mod island {
         if msg == WM_DESTROY {
             KillTimer(hwnd, 17);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            if !(*ptr).bubble.is_null() {
+                DestroyWindow((*ptr).bubble);
+            }
             drop(Box::from_raw(ptr));
             PostQuitMessage(0);
             return 0;
         }
         let s = &mut *ptr;
         match msg {
+            BUBBLE_OPEN => {
+                activate(hwnd, s, Action::Toggle);
+                SetForegroundWindow(hwnd);
+                InvalidateRect(hwnd, null(), 0);
+                0
+            }
             WM_ACTIVATE if (wp as u32 & 0xFFFF) == WA_INACTIVE => {
                 if s.open || s.peek {
                     collapse(s);
@@ -1969,9 +2187,11 @@ mod island {
                     s.hover,
                     s.hover_t,
                     s.peek,
+                    s.bubble_alpha,
                 );
                 let mut cursor = zeroed();
                 GetCursorPos(&mut cursor);
+                let on_bubble = !s.bubble.is_null() && WindowFromPoint(cursor) == s.bubble;
                 let mouse_down = [0x01, 0x02, 0x04]
                     .iter()
                     .any(|key| GetAsyncKeyState(*key) < 0);
@@ -1982,7 +2202,7 @@ mod island {
                     && (s.open || s.peek)
                 {
                     let target = WindowFromPoint(cursor);
-                    if target != hwnd && IsChild(hwnd, target) == 0 {
+                    if target != hwnd && target != s.bubble && IsChild(hwnd, target) == 0 {
                         collapse(s);
                         InvalidateRect(hwnd, null_mut(), 0);
                     }
@@ -1993,7 +2213,8 @@ mod island {
                 let y = cursor.y as f32 / s.scale;
                 let inside = x >= 0. && x < s.w && y >= 0. && y < s.h;
                 if !s.open && s.settings.circle && s.down.is_none() && !s.drag {
-                    if inside && (s.peek || ((x - 38.).powi(2) + (y - 38.).powi(2) < 38f32.powi(2)))
+                    if on_bubble
+                        || (inside && ((x - 38.).powi(2) + (y - 38.).powi(2) < 38f32.powi(2)))
                     {
                         s.peek = true;
                         s.peek_until = t + 0.3;
@@ -2004,14 +2225,27 @@ mod island {
                 let (tw, th) = if s.open {
                     (EW, EH)
                 } else if s.settings.circle {
-                    if s.peek {
-                        (320., 184.)
-                    } else {
-                        (CIRCLE, CIRCLE)
-                    }
+                    (CIRCLE, CIRCLE)
                 } else {
                     (PILL_W, PILL_H)
                 };
+                if s.open || !s.settings.circle || s.drag || s.down.is_some() {
+                    s.peek = false;
+                }
+                let bubble_target =
+                    if s.peek && (s.w - CIRCLE).abs() < 0.1 && (s.h - CIRCLE).abs() < 0.1 {
+                        1.
+                    } else {
+                        0.
+                    };
+                s.bubble_alpha = if s.settings.reduced_motion {
+                    bubble_target
+                } else {
+                    s.bubble_alpha + (bubble_target - s.bubble_alpha) * (dt * 20.).min(1.)
+                };
+                if (s.bubble_alpha - bubble_target).abs() < 0.005 {
+                    s.bubble_alpha = bubble_target;
+                }
                 let target_scale = if s.open {
                     s.settings.menu_scale
                 } else {
@@ -2204,6 +2438,7 @@ mod island {
                         s.hover,
                         s.hover_t,
                         s.peek,
+                        s.bubble_alpha,
                     )
                     || changed
                     || s.edit_focus
@@ -2392,6 +2627,8 @@ mod island {
             open: preview,
             peek: false,
             peek_until: 0.,
+            bubble: null_mut(),
+            bubble_alpha: 0.,
             w: if circle { CIRCLE } else { PILL_W },
             h: if circle { CIRCLE } else { PILL_H },
             vw: 0.,
@@ -2487,6 +2724,29 @@ mod island {
             if hwnd.is_null() {
                 return;
             }
+            let bubble_class = wide("MuislandHoverWindow");
+            RegisterClassW(&WNDCLASSW {
+                lpfnWndProc: Some(bubble_proc),
+                hInstance: instance,
+                hCursor: LoadCursorW(null_mut(), IDC_HAND),
+                lpszClassName: bubble_class.as_ptr(),
+                ..zeroed()
+            });
+            s.bubble = CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+                bubble_class.as_ptr(),
+                wide("Muisland account usage").as_ptr(),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                hwnd,
+                null_mut(),
+                instance,
+                null(),
+            );
+            SetWindowLongPtrW(s.bubble, GWLP_USERDATA, hwnd as isize);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(s) as isize);
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             SetTimer(hwnd, 17, 16, None);
@@ -2501,6 +2761,78 @@ mod island {
     #[cfg(test)]
     mod tests {
         use super::*;
+        #[test]
+        fn hover_bubble_fits_all_corners_without_moving_circle() {
+            for area in [
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1040,
+                },
+                RECT {
+                    left: -1280,
+                    top: -300,
+                    right: 0,
+                    bottom: 720,
+                },
+            ] {
+                for diameter in [46., 76., 137.] {
+                    for is_right in [false, true] {
+                        for bottom in [false, true] {
+                            let cx = if is_right {
+                                area.right as f32 - 8. - diameter / 2.
+                            } else {
+                                area.left as f32 + 8. + diameter / 2.
+                            };
+                            let top = if bottom {
+                                area.bottom - 8 - diameter as i32
+                            } else {
+                                area.top + 8
+                            };
+                            let p = bubble_placement(&[area], cx, top, diameter, 1.8).unwrap();
+                            assert_eq!(p.right, !is_right);
+                            assert!(p.x >= area.left + 7 && p.y >= area.top + 7);
+                            assert!(p.x + (BUBBLE_W * p.scale).round() as i32 <= area.right - 7);
+                            assert!(p.y + (BUBBLE_H * p.scale).round() as i32 <= area.bottom - 7);
+                            if p.right {
+                                assert!(p.x as f32 > cx + diameter / 2.);
+                            } else {
+                                assert!((p.x as f32 + BUBBLE_W * p.scale) < cx - diameter / 2.);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        #[test]
+        fn hover_does_not_change_circle_render_dimensions() {
+            let mut s = initial(true, 0., 0);
+            s.open = false;
+            s.settings.circle = true;
+            s.w = CIRCLE;
+            s.h = CIRCLE;
+            for peek in [false, true] {
+                s.peek = peek;
+                let image = unsafe { render_surface(&s) }.unwrap();
+                assert_eq!((image.w, image.h), (76, 76));
+            }
+        }
+        #[test]
+        fn bubble_has_transparent_corners_and_tail_on_correct_side() {
+            let s = initial(true, 0., 0);
+            for right in [false, true] {
+                let image = unsafe { render_bubble(&s, 1., right, 94.) }.unwrap();
+                let pixels = unsafe {
+                    std::slice::from_raw_parts(image.bits, (image.w * image.h * 4) as usize)
+                };
+                let alpha = |x: i32, y: i32| pixels[((y * image.w + x) * 4 + 3) as usize];
+                assert_eq!(alpha(0, 0), 0);
+                let edge = if right { 3 } else { image.w - 4 };
+                assert!(alpha(edge, 94) > 200);
+                assert_eq!(alpha(edge, 40), 0);
+            }
+        }
         #[test]
         fn account_hit_targets_are_not_limited_to_two() {
             let mut s = initial(true, 0., 0);
@@ -2637,11 +2969,11 @@ mod island {
             assert!(a >= 8.);
         }
         #[test]
-        fn collapsed_circle_and_hover_card_are_draggable_everywhere() {
+        fn collapsed_circle_is_draggable_and_menu_body_is_not() {
             let mut s = initial(true, 0., 0);
             s.open = false;
             s.settings.circle = true;
-            for (x, y) in [(38, 38), (38, 70), (52, 92), (210, 120)] {
+            for (x, y) in [(38, 38), (38, 70), (52, 52), (20, 30)] {
                 assert!(drag_zone(&s, x, y));
             }
             s.open = true;

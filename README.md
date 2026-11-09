@@ -93,5 +93,5 @@ Automatic usage uses each user's own saved Claude session on that Windows accoun
 
 ## Circle drag and outside-click dismissal
 
-The entire collapsed pill/circle and hover card can be dragged. Hover morphing is held while the pointer is pressed, and dragging does not activate the open-menu click. The open menu remains draggable only from its header.
+The collapsed pill/circle can be dragged. The circle stays fixed during hover; a separate rounded usage bubble appears beside it with a pointer, choosing left or right according to available monitor space and clamping vertically to the work area. Moving the pointer onto the card keeps it visible, and clicking it opens the menu. The card fades out when leaving both surfaces and hides during dragging. Dragging does not activate the open-menu click. The open menu remains draggable only from its header.
 Clicking outside closes the open menu or hover card. Dismissal abandons pending, unconfirmed switches, does not auto-save unfinished account-name edits, and does not execute confirmations. Previously confirmed background operations finish safely, but their completion does not reopen a dismissed menu. Focus deactivation handles ordinary clicks; a mouse-state check covers outside clicks on non-activating surfaces. The app does not install a global input hook or log external clicks.
