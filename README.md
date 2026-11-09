@@ -4,6 +4,10 @@
 
 A native Windows companion for Claude Desktop, built with Rust and Win32. Save account sign-ins, switch between them, and keep an eye on usage from a compact floating pill or circle.
 
+<p>
+  <a href="https://muhameho.github.io/Muisland/"><img src="docs/images/try-demo.svg" width="252" height="48" alt="Try interactive demo" /></a>
+</p>
+
 > Unofficial project. Muisland is not affiliated with or endorsed by Anthropic. Claude's local storage and usage endpoint may change.
 
 [Gallery](#gallery) · [Interactive demo](#interactive-demo) · [Getting started](#build-and-run) · [Controls](#controls-and-motion) · [Privacy](#usage-and-privacy) · [Troubleshooting](#troubleshooting)
@@ -47,11 +51,11 @@ The expanded menu, floating island, and hover bubble each have their own size co
 
 ## Interactive demo
 
-**[Download the standalone playground](demo/index.html?raw=1)** · [View its source](demo/index.html)
+**[Open the live interactive playground](https://muhameho.github.io/Muisland/)** · [Download the standalone HTML](demo/index.html?raw=1) · [View its source](demo/index.html)
 
-The demo lives in `demo/`, separately from documentation. A direct online link can be added after Pages publication is enabled.
+The demo is hosted on GitHub Pages from `demo/`, separately from documentation. It opens directly in the browser; no download or setup is needed.
 
-Use the live link when available, or save the HTML file and open it in a browser. It is self-contained: no build step, backend, external fonts, or Claude connection. If GitHub opens the source view, choose **Download raw file** and open the saved file.
+Use the live link, or save the HTML file and open it in a browser for offline use. It is self-contained: no build step, backend, external fonts, or Claude connection. If GitHub opens the source view, choose **Download raw file** and open the saved file.
 
 Try these interactions:
 
