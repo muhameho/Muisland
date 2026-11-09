@@ -196,6 +196,7 @@ class Shell:
         self.floating = tuple(service.settings.get("position", (100, 80)))
         self.position_timer = 0
         self.placed = {}
+        self.layer_monitors = {}
         self.open = False
         self.dragging = False
         self.down = None
@@ -392,8 +393,9 @@ class Shell:
                 *self.floating
             ) or display.get_monitor(0)
             geometry = monitor.get_geometry()
-            if GtkLayerShell.get_monitor(win) != monitor:
+            if self.layer_monitors.get(role) != monitor:
                 GtkLayerShell.set_monitor(win, monitor)
+                self.layer_monitors[role] = monitor
             GtkLayerShell.set_margin(
                 win, GtkLayerShell.Edge.LEFT, max(0, int(x - geometry.x))
             )
