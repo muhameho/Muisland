@@ -1,0 +1,1066 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Muisland — interactive playground</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Segoe UI,
+          system-ui,
+          sans-serif;
+        color: #edf2e8;
+        background: #11150f;
+        --green: #badd94;
+        --muted: #929e8c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        border: 0;
+        color: inherit;
+        background: #293025;
+        border-radius: 13px;
+        padding: 11px 16px;
+        transition:
+          background 0.18s,
+          transform 0.18s;
+      }
+      button:hover {
+        background: #374331;
+      }
+      button:active {
+        transform: scale(0.97);
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--green);
+        outline-offset: 4px;
+      }
+      button.primary {
+        background: var(--green);
+        color: #15210d;
+        font-weight: 650;
+      }
+      button.quiet {
+        background: transparent;
+        color: var(--muted);
+      }
+      a {
+        color: var(--green);
+      }
+      header,
+      .layout,
+      footer {
+        max-width: 1320px;
+        margin: auto;
+        padding: 28px 40px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #ffffff0c;
+      }
+      .brand {
+        font-weight: 650;
+        letter-spacing: -0.5px;
+        font-size: 22px;
+      }
+      .brand span {
+        color: var(--green);
+        margin-right: 10px;
+      }
+      .badge {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1.7px;
+        color: var(--green);
+        border: 1px solid #badd9433;
+        padding: 7px 10px;
+        border-radius: 40px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 56px;
+        padding-top: 54px;
+      }
+      h1 {
+        font-size: 52px;
+        line-height: 1.05;
+        letter-spacing: -2.3px;
+        font-weight: 550;
+        margin: 16px 0 22px;
+      }
+      h1 em {
+        color: var(--green);
+        font-style: normal;
+      }
+      .intro {
+        font-size: 15px;
+        color: #a5b09f;
+        line-height: 1.8;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--green);
+      }
+      .scenes {
+        display: grid;
+        gap: 9px;
+        margin: 28px 0;
+      }
+      .scenes button {
+        text-align: left;
+        background: #1c2318;
+        color: #c6d2bd;
+        font-size: 13px;
+        padding: 14px 16px;
+      }
+      .scenes button span {
+        float: right;
+        color: #7c8975;
+      }
+      .hint {
+        font-size: 12px;
+        line-height: 1.8;
+        color: #85917e;
+      }
+      .stage-wrap {
+        min-width: 0;
+      }
+      .stage {
+        height: 620px;
+        position: relative;
+        overflow: hidden;
+        border: 1px solid #ffffff12;
+        border-radius: 30px;
+        background:
+          radial-gradient(ellipse at 70% 15%, #28352266, transparent 65%),
+          radial-gradient(#ffffff12 0.65px, transparent 0.65px), #171d14;
+        background-size:
+          auto,
+          22px 22px,
+          auto;
+        touch-action: none;
+      }
+      .stage-label {
+        position: absolute;
+        top: 24px;
+        left: 26px;
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: #6c7b63;
+        text-transform: uppercase;
+        pointer-events: none;
+      }
+      .stage-tip {
+        position: absolute;
+        bottom: 22px;
+        left: 24px;
+        right: 24px;
+        text-align: center;
+        font-size: 11px;
+        color: #71816a;
+        pointer-events: none;
+      }
+      .circle {
+        position: absolute;
+        display: grid;
+        place-items: center;
+        background: #090c08;
+        border-radius: 50%;
+        padding: 0;
+        box-shadow: 0 12px 35px #0003;
+        user-select: none;
+        touch-action: none;
+        z-index: 3;
+        transition:
+          width 0.25s,
+          height 0.25s;
+      }
+      .circle:hover {
+        background: #090c08;
+      }
+      .circle svg {
+        position: absolute;
+        width: 78%;
+        height: 78%;
+        overflow: visible;
+        transform: rotate(-90deg);
+      }
+      .circle circle {
+        fill: none;
+        stroke: #303d2a;
+        stroke-width: 2;
+      }
+      .circle .meter {
+        stroke: var(--green);
+        stroke-linecap: round;
+        transition: stroke-dashoffset 0.4s;
+      }
+      .monogram {
+        font-size: calc(var(--diameter) * 0.32);
+        font-weight: 300;
+        color: #e7efdf;
+      }
+      .bubble {
+        position: absolute;
+        width: 286px;
+        border-radius: 23px;
+        background: #1a2217;
+        padding: 20px;
+        z-index: 4;
+        box-shadow: 0 15px 45px #0003;
+        transform-origin: var(--origin, left center);
+        transform: translateX(var(--slide, 8px))
+          scale(calc(var(--bs, 1) * 0.94));
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          transform 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+          opacity 0.2s,
+          visibility 0.24s;
+        cursor: pointer;
+      }
+      .bubble.shown {
+        opacity: 1;
+        visibility: visible;
+        transform: translateX(0) scale(var(--bs, 1));
+      }
+      .bubble::before {
+        content: "";
+        position: absolute;
+        width: 15px;
+        height: 15px;
+        background: #1a2217;
+        left: -6px;
+        top: var(--tail, 60px);
+        transform: rotate(45deg);
+        border-radius: 3px;
+      }
+      .bubble.left::before {
+        left: auto;
+        right: -6px;
+      }
+      .bubble-name {
+        font-weight: 650;
+        font-size: 16px;
+      }
+      .sub {
+        font-size: 10px;
+        color: var(--muted);
+        margin-top: 5px;
+      }
+      .rule {
+        height: 1px;
+        background: #303a2a;
+        margin: 15px 0;
+      }
+      .quota {
+        margin-top: 16px;
+      }
+      .quota .label {
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .track {
+        height: 3px;
+        background: #34402d;
+        margin: 6px 0 7px;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .fill {
+        height: 100%;
+        background: var(--green);
+        transition: width 0.35s;
+      }
+      .reset {
+        font-size: 9px;
+        color: #99a68f;
+      }
+      .menu {
+        position: absolute;
+        width: 360px;
+        min-height: 450px;
+        padding: 18px 16px 20px;
+        background: #090c08;
+        border-radius: 30px;
+        z-index: 5;
+        transform-origin: top left;
+        box-shadow: 0 20px 60px #0004;
+        animation: menuIn 0.27s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes menuIn {
+        from {
+          opacity: 0;
+          translate: 0 9px;
+          filter: blur(3px);
+        }
+        to {
+          opacity: 1;
+          translate: 0 0;
+          filter: blur(0);
+        }
+      }
+      .menu[hidden] {
+        display: none;
+      }
+      .menu-head {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        cursor: pointer;
+        height: 34px;
+        user-select: none;
+      }
+      .logo {
+        width: 29px;
+        height: 29px;
+        display: grid;
+        place-items: center;
+        background: #283621;
+        color: var(--green);
+        border-radius: 50%;
+        font-size: 18px;
+        font-weight: 350;
+      }
+      .title {
+        font-size: 16px;
+        font-weight: 650;
+        flex: 1;
+      }
+      .menu-head button {
+        padding: 3px 8px;
+        border-radius: 50%;
+        font-size: 18px;
+      }
+      .body {
+        animation: bodyIn 0.16s ease;
+      }
+      @keyframes bodyIn {
+        from {
+          opacity: 0.3;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      h2 {
+        font-size: 26px;
+        font-weight: 550;
+        letter-spacing: -0.8px;
+        margin: 30px 5px 5px;
+      }
+      .subtitle {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 0 5px 20px;
+      }
+      .account {
+        background: #192016;
+        border-radius: 22px;
+        padding: 16px;
+        margin: 10px 0;
+      }
+      .account-top {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .avatar {
+        width: 29px;
+        height: 29px;
+        display: grid;
+        place-items: center;
+        background: #34462a;
+        color: var(--green);
+        border-radius: 50%;
+        font-size: 12px;
+      }
+      .account-name {
+        flex: 1;
+        font-size: 13px;
+      }
+      .account-name small {
+        display: block;
+        font-size: 9px;
+        color: var(--muted);
+        margin-top: 3px;
+      }
+      .account-name button {
+        padding: 0;
+        background: transparent;
+        text-align: left;
+      }
+      .tiny {
+        padding: 7px 10px;
+        font-size: 11px;
+        border-radius: 11px;
+      }
+      .quota-pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-top: 11px;
+      }
+      .quota-pair .quota {
+        margin: 0;
+      }
+      .account-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 18px 4px;
+      }
+      .foot {
+        font-size: 9px;
+        color: #7e8b76;
+        margin: 20px 5px 0;
+      }
+      .row {
+        padding: 13px 4px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .row input[type="range"] {
+        width: 125px;
+        accent-color: var(--green);
+      }
+      .row output {
+        font-size: 11px;
+        min-width: 34px;
+        text-align: right;
+        color: var(--green);
+      }
+      .setting-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .row input[type="checkbox"] {
+        accent-color: var(--green);
+        width: 17px;
+        height: 17px;
+      }
+      .sample {
+        padding: 14px;
+        background: #1c2517;
+        border-radius: 15px;
+        font-size: 11px;
+        line-height: 1.7;
+        color: #a4b398;
+        margin-top: 13px;
+      }
+      .confirm-copy {
+        color: #a8b5a0;
+        font-size: 13px;
+        line-height: 1.8;
+        margin: 18px 5px 30px;
+      }
+      .action-row {
+        display: flex;
+        gap: 9px;
+        margin: 15px 4px;
+      }
+      .action-row button {
+        flex: 1;
+        font-size: 12px;
+      }
+      .rename {
+        background: #1b2516;
+        color: #edf2e8;
+        border: 1px solid #4b613b;
+        border-radius: 12px;
+        width: 100%;
+        padding: 12px;
+        margin-top: 15px;
+      }
+      .toast {
+        position: absolute;
+        bottom: 58px;
+        left: 50%;
+        translate: -50% 0;
+        padding: 10px 17px;
+        background: #badd94;
+        color: #15210d;
+        border-radius: 30px;
+        font-size: 12px;
+        z-index: 8;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.2s;
+      }
+      .toast.visible {
+        opacity: 1;
+      }
+      .stage-controls {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 14px 0;
+      }
+      .stage-controls button {
+        font-size: 11px;
+        padding: 9px 13px;
+        border: 1px solid #ffffff0d;
+        background: #1b2317;
+      }
+      .stage-controls label {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #9fae96;
+        font-size: 11px;
+      }
+      .stage-controls input {
+        accent-color: var(--green);
+        width: 100px;
+      }
+      footer {
+        color: #6d7a65;
+        font-size: 11px;
+        line-height: 1.7;
+        padding-top: 38px;
+        padding-bottom: 30px;
+      }
+      .reduce * {
+        animation: none !important;
+        transition: none !important;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+          gap: 25px;
+          padding: 30px 20px;
+        }
+        .intro-panel {
+          max-width: 630px;
+        }
+        h1 {
+          font-size: 43px;
+        }
+        .scenes {
+          grid-template-columns: 1fr 1fr;
+          margin: 20px 0;
+        }
+        .intro {
+          margin-bottom: 0;
+        }
+        .hint {
+          display: none;
+        }
+        header,
+        footer {
+          padding: 22px 20px;
+        }
+        .stage {
+          height: 600px;
+        }
+        .stage-controls label {
+          margin-left: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand"><span>Ⓜ</span>Muisland</div>
+      <div class="badge">Interactive demo · sample data</div>
+    </header>
+    <main class="layout">
+      <aside class="intro-panel">
+        <div class="eyebrow">A little island. A lot less switching.</div>
+        <h1>Small circle.<br /><em>Full control.</em></h1>
+        <p class="intro">
+          Hover. Drag. Open. Switch.<br />Try the feel of Muisland in this
+          browser playground.
+        </p>
+        <div class="scenes">
+          <button data-scene="circle">
+            01 &nbsp; Floating circle <span>↗</span></button
+          ><button data-scene="accounts">
+            02 &nbsp; Your accounts <span>↗</span></button
+          ><button data-scene="preferences">
+            03 &nbsp; Make it yours <span>↗</span></button
+          ><button id="reset">↺ &nbsp; Reset playground</button>
+        </div>
+        <p class="hint">
+          Drag the circle toward a corner to watch the bubble change sides. Open
+          Preferences and shrink the circle: the hover card keeps its own size.
+        </p>
+        <p class="hint">
+          This is a browser simulation of the native app. It uses invented
+          accounts, never connects to Claude, and saves nothing.
+        </p>
+      </aside>
+      <section class="stage-wrap" aria-label="Interactive app playground">
+        <div id="stage" class="stage">
+          <div class="stage-label">Your desktop, simplified</div>
+          <button
+            id="circle"
+            class="circle"
+            aria-label="Open Muisland; drag to move"
+          >
+            <svg viewBox="0 0 60 60" aria-hidden="true">
+              <circle cx="30" cy="30" r="27" />
+              <circle
+                class="meter"
+                cx="30"
+                cy="30"
+                r="27"
+                stroke-dasharray="169.65"
+              /></svg
+            ><span class="monogram">M</span>
+          </button>
+          <div
+            id="bubble"
+            class="bubble"
+            role="button"
+            tabindex="0"
+            aria-label="Open accounts"
+          ></div>
+          <section id="menu" class="menu" aria-label="Muisland menu" hidden>
+            <div class="menu-head" id="header">
+              <span class="logo">M</span><span class="title">Muisland</span
+              ><button id="settings" aria-label="Preferences">···</button
+              ><button id="close" aria-label="Collapse menu">−</button>
+            </div>
+            <div id="body" class="body"></div>
+          </section>
+          <div id="toast" class="toast" role="status"></div>
+          <div class="stage-tip">
+            Drag the M · Hover for usage · Click to open · Click the desktop to
+            close
+          </div>
+        </div>
+        <div class="stage-controls">
+          <button id="left">↖ Left corner</button
+          ><button id="right">Right corner ↗</button
+          ><label
+            >Sample usage
+            <input
+              id="usage"
+              type="range"
+              min="0"
+              max="100"
+              value="28"
+              aria-label="Sample session usage"
+          /></label>
+        </div>
+      </section>
+    </main>
+    <footer>
+      Browser interaction study · The Windows app is built with Rust &amp;
+      Win32. Native features, credentials, and backup operations are not
+      executed by this demo.
+    </footer>
+    <script>
+      const $ = (id) => document.getElementById(id),
+        stage = $("stage"),
+        circle = $("circle"),
+        bubble = $("bubble"),
+        menu = $("menu"),
+        body = $("body");
+      const defaults = () => ({
+        accounts: [
+          { name: "Personal", used: 28, week: 46 },
+          { name: "Work", used: 82, week: 61 },
+        ],
+        active: 0,
+        page: 0,
+        float: 1,
+        bubble: 1,
+        menu: 1,
+        reduce: false,
+        x: 120,
+        y: 215,
+        view: "accounts",
+        open: false,
+      });
+      let state = defaults(),
+        hideTimer,
+        toastTimer,
+        drag = null;
+      const clamp = (v, a, b) => Math.min(Math.max(v, a), Math.max(a, b));
+      const escapeHTML = (s) =>
+        s.replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      const quota = (label, used, reset) =>
+        `<div class="quota"><div class="label">${label} · ${used}% used</div><div class="track"><div class="fill" style="width:${used}%"></div></div><div class="reset">Resets in ${reset}</div></div>`;
+      function showToast(s) {
+        $("toast").textContent = s;
+        $("toast").classList.add("visible");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(
+          () => $("toast").classList.remove("visible"),
+          2400,
+        );
+      }
+      function position() {
+        const d = 76 * state.float;
+        state.x = clamp(state.x, 12, stage.clientWidth - d - 12);
+        state.y = clamp(state.y, 12, stage.clientHeight - d - 12);
+        Object.assign(circle.style, {
+          left: state.x + "px",
+          top: state.y + "px",
+          width: d + "px",
+          height: d + "px",
+          "--diameter": d + "px",
+        });
+        circle.style.setProperty("--diameter", d + "px");
+        const a = state.accounts[state.active];
+        circle.querySelector(".meter").style.strokeDashoffset =
+          169.65 * (1 - a.used / 100);
+        const bs = Math.min(
+          state.bubble,
+          (stage.clientWidth - d - 40) / 286,
+          (stage.clientHeight - 24) / Math.max(1, bubble.offsetHeight),
+        );
+        const w = 286 * bs,
+          h = bubble.offsetHeight * bs;
+        const right = state.x + d / 2 < stage.clientWidth / 2;
+        let x = right ? state.x + d + 12 : state.x - w - 12;
+        let y = clamp(state.y + d / 2 - h / 2, 12, stage.clientHeight - h - 12);
+        bubble.classList.toggle("left", !right);
+        Object.assign(bubble.style, {
+          left: clamp(x, 12, stage.clientWidth - w - 12) + "px",
+          top: y + "px",
+          "--bs": bs,
+          "--origin": right ? "left center" : "right center",
+          "--slide": right ? "8px" : "-8px",
+          "--tail":
+            clamp(
+              (state.y + d / 2 - y) / bs - 7,
+              23,
+              bubble.offsetHeight - 32,
+            ) + "px",
+        });
+        bubble.style.setProperty("--bs", bs);
+        bubble.style.setProperty(
+          "--origin",
+          right ? "left center" : "right center",
+        );
+        bubble.style.setProperty("--slide", right ? "8px" : "-8px");
+        bubble.style.setProperty(
+          "--tail",
+          clamp((state.y + d / 2 - y) / bs - 7, 23, bubble.offsetHeight - 32) +
+            "px",
+        );
+        if (state.open) {
+          const k = Math.min(
+            state.menu,
+            (stage.clientWidth - 24) / 360,
+            (stage.clientHeight - 24) / menu.offsetHeight,
+          );
+          Object.assign(menu.style, {
+            transform: `scale(${k})`,
+            left:
+              clamp(
+                state.x + d / 2 - 180 * k,
+                12,
+                stage.clientWidth - 360 * k - 12,
+              ) + "px",
+            top:
+              clamp(
+                state.y,
+                12,
+                stage.clientHeight - menu.offsetHeight * k - 12,
+              ) + "px",
+          });
+        }
+      }
+      function renderBubble() {
+        const a = state.accounts[state.active];
+        bubble.innerHTML = `<div class="bubble-name">${escapeHTML(a.name)}</div><div class="sub">Demo · Sample usage</div><div class="rule"></div>${quota("5h", a.used, "2h 0m")}${quota("7d", a.week, "3d 0h")}`;
+        position();
+      }
+      function open(view = "accounts") {
+        state.open = true;
+        state.view = view;
+        bubble.classList.remove("shown");
+        circle.style.visibility = "hidden";
+        menu.hidden = false;
+        render();
+      }
+      function close() {
+        state.open = false;
+        menu.hidden = true;
+        circle.style.visibility = "visible";
+        bubble.classList.remove("shown");
+        position();
+      }
+      function hover() {
+        clearTimeout(hideTimer);
+        if (!state.open && !drag) {
+          renderBubble();
+          bubble.classList.add("shown");
+        }
+      }
+      function leave() {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => bubble.classList.remove("shown"), 260);
+      }
+      function render() {
+        document.documentElement.classList.toggle("reduce", state.reduce);
+        if (state.view === "accounts") {
+          const start = state.page * 2;
+          body.innerHTML =
+            `<h2>Your accounts.</h2><p class="subtitle">Sample limits. A seamless switch.</p>` +
+            state.accounts
+              .slice(start, start + 2)
+              .map((a, j) => {
+                let i = start + j;
+                return `<article class="account"><div class="account-top"><span class="avatar">${i + 1}</span><div class="account-name"><button data-switch="${i}">${escapeHTML(a.name)}</button><small>${i === state.active ? "Logged in · sample account" : "Saved · sample account"}</small></div><button class="tiny" data-edit="${i}" aria-label="Edit ${escapeHTML(a.name)}">···</button><button class="tiny" data-save="${i}">Save</button></div><div class="quota-pair">${quota("5h", a.used, "2h")}${quota("7d", a.week, "3d")}</div></article>`;
+              })
+              .join("") +
+            `<div class="account-actions"><div><button class="tiny quiet" data-page="-1" aria-label="Previous accounts">‹</button><small>${state.page + 1} / ${Math.ceil(state.accounts.length / 2)}</small><button class="tiny quiet" data-page="1" aria-label="Next accounts">›</button></div><button class="tiny" data-add>+ Add account</button></div><div class="foot">Interactive sample · No real account operations</div>`;
+        } else if (state.view === "preferences") {
+          body.innerHTML =
+            `<h2>Make it yours.</h2><p class="subtitle">Three independent sizes. Try each one.</p>` +
+            [
+              ["menu", "Menu size", 0.75, 1.6],
+              ["float", "Floating circle size", 0.6, 1.8],
+              ["bubble", "Hover bubble size", 0.85, 1.6],
+            ]
+              .map(
+                ([key, label, min, max]) =>
+                  `<label class="row">${label}<span class="setting-controls"><input data-size="${key}" type="range" min="${min}" max="${max}" step=".05" value="${state[key]}"><output>${Math.round(state[key] * 100)}%</output></span></label>`,
+              )
+              .join("") +
+            `<label class="row">Reduce motion<input id="reduce" type="checkbox" ${state.reduce ? "checked" : ""}></label><div class="sample">Shrink the floating circle, then hover it.<br>The bubble stays at its own size.</div><div class="action-row"><button data-back>Back</button><button class="primary" data-collapse>Try the circle</button></div>`;
+        } else if (state.view === "confirm") {
+          const a = state.accounts[state.pending];
+          body.innerHTML = `<h2>Switch account?</h2><p class="confirm-copy">Switch to <strong>${escapeHTML(a.name)}</strong>?<br>In the native app, confirming may close and reopen Claude. Here, only the sample active account changes.</p><div class="action-row"><button data-back>Cancel</button><button class="primary" data-confirm>Confirm switch</button></div>`;
+        } else if (state.view === "edit") {
+          const a = state.accounts[state.pending];
+          body.innerHTML = `<h2>Name your account.</h2><p class="subtitle">Only this browser demo changes.</p><input id="name" class="rename" maxlength="48" aria-label="Account name" value="${escapeHTML(a.name)}"><div class="action-row"><button data-back>Cancel</button><button class="primary" data-rename>Save name</button></div><button class="quiet" data-remove>Remove sample account</button>`;
+        }
+        renderBubble();
+        position();
+      }
+      body.addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.hasAttribute("data-switch")) {
+          const i = +b.dataset.switch;
+          if (i === state.active)
+            showToast("This account is already logged in");
+          else {
+            state.pending = i;
+            state.view = "confirm";
+            render();
+          }
+        } else if (b.hasAttribute("data-confirm")) {
+          state.active = state.pending;
+          state.view = "accounts";
+          render();
+          $("usage").value = state.accounts[state.active].used;
+          showToast("Sample account switched");
+        } else if (b.hasAttribute("data-edit")) {
+          state.pending = +b.dataset.edit;
+          state.view = "edit";
+          render();
+          $("name").focus();
+        } else if (b.hasAttribute("data-rename")) {
+          let value = $("name").value.trim();
+          if (value) {
+            state.accounts[state.pending].name = value;
+            state.view = "accounts";
+            render();
+          }
+        } else if (b.hasAttribute("data-remove")) {
+          if (state.accounts.length === 1) {
+            showToast("Keep one sample account in this demo");
+            return;
+          }
+          const i = state.pending;
+          state.accounts.splice(i, 1);
+          state.active =
+            state.active === i
+              ? 0
+              : state.active > i
+                ? state.active - 1
+                : state.active;
+          state.page = Math.min(
+            state.page,
+            Math.ceil(state.accounts.length / 2) - 1,
+          );
+          state.view = "accounts";
+          render();
+        } else if (b.hasAttribute("data-save"))
+          showToast("Demo only — no sign-in captured");
+        else if (b.hasAttribute("data-add")) {
+          if (state.accounts.length >= 64) return;
+          state.accounts.push({
+            name: `Account ${state.accounts.length + 1}`,
+            used: 12,
+            week: 24,
+          });
+          state.page = Math.floor((state.accounts.length - 1) / 2);
+          render();
+        } else if (b.hasAttribute("data-page")) {
+          state.page = clamp(
+            state.page + +b.dataset.page,
+            0,
+            Math.ceil(state.accounts.length / 2) - 1,
+          );
+          render();
+        } else if (b.hasAttribute("data-back")) {
+          state.view = "accounts";
+          render();
+        } else if (b.hasAttribute("data-collapse")) close();
+      });
+      body.addEventListener("input", (e) => {
+        if (e.target.dataset.size) {
+          state[e.target.dataset.size] = +e.target.value;
+          e.target.nextElementSibling.value =
+            Math.round(e.target.value * 100) + "%";
+          position();
+        }
+      });
+      body.addEventListener("change", (e) => {
+        if (e.target.id === "reduce") {
+          state.reduce = e.target.checked;
+          document.documentElement.classList.toggle("reduce", state.reduce);
+        }
+      });
+      circle.addEventListener("pointerenter", hover);
+      circle.addEventListener("pointerleave", leave);
+      bubble.addEventListener("pointerenter", hover);
+      bubble.addEventListener("pointerleave", leave);
+      bubble.addEventListener("click", () => open());
+      bubble.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      });
+      circle.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        drag = {
+          px: e.clientX,
+          py: e.clientY,
+          x: state.x,
+          y: state.y,
+          moved: false,
+        };
+        circle.setPointerCapture(e.pointerId);
+        bubble.classList.remove("shown");
+      });
+      circle.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        let dx = e.clientX - drag.px,
+          dy = e.clientY - drag.py;
+        if (Math.hypot(dx, dy) > 4) drag.moved = true;
+        if (drag.moved) {
+          state.x = drag.x + dx;
+          state.y = drag.y + dy;
+          position();
+        }
+      });
+      circle.addEventListener("pointerup", (e) => {
+        if (!drag) return;
+        const moved = drag.moved;
+        drag = null;
+        if (circle.hasPointerCapture(e.pointerId))
+          circle.releasePointerCapture(e.pointerId);
+        if (!moved) open();
+      });
+      circle.addEventListener("pointercancel", () => {
+        drag = null;
+      });
+      circle.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      });
+      $("header").addEventListener("click", (e) => {
+        if (e.target.closest("#settings")) {
+          state.view = "preferences";
+          render();
+        } else close();
+      });
+      stage.addEventListener("pointerdown", (e) => {
+        if (e.target === stage) close();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") close();
+      });
+      document
+        .querySelectorAll("[data-scene]")
+        .forEach(
+          (b) =>
+            (b.onclick = () =>
+              b.dataset.scene === "circle" ? close() : open(b.dataset.scene)),
+        );
+      $("left").onclick = () => {
+        close();
+        state.x = 12;
+        state.y = 12;
+        position();
+        hover();
+      };
+      $("right").onclick = () => {
+        close();
+        state.x = stage.clientWidth - 76 * state.float - 12;
+        state.y = 12;
+        position();
+        hover();
+      };
+      $("usage").oninput = (e) => {
+        state.accounts[state.active].used = +e.target.value;
+        renderBubble();
+        if (state.open && state.view === "accounts") render();
+      };
+      $("reset").onclick = () => {
+        state = defaults();
+        $("usage").value = 28;
+        document.documentElement.classList.remove("reduce");
+        close();
+        renderBubble();
+      };
+      window.addEventListener("resize", position);
+      renderBubble();
+    </script>
+  </body>
+</html>
