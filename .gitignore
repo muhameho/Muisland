@@ -38,3 +38,8 @@ session.json
 /gitleaks*.json
 /gitleaks*.sarif
 /security-audit/
+
+# Linux packaging and Python caches
+/dist/
+__pycache__/
+*.pyc

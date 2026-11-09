@@ -1,0 +1,15 @@
+target
+dist
+.git
+preview
+.env*
+**/auth.json
+**/credentials*.json
+**/account-*
+**/local-backups
+**/removed-accounts
+**/saved-versions
+**/recovered
+**/__pycache__
+**/*.key
+**/*.pem

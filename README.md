@@ -1,14 +1,14 @@
 # Muisland
 
-**Your Claude accounts, one floating island.**
+**Your Claude and Codex accounts, one floating island.**
 
-A native Windows companion for Claude Desktop, built with Rust and Win32. Save account sign-ins, switch between them, and keep an eye on usage from a compact floating pill or circle.
+An account and usage companion for **Claude and Codex**, with a native Rust/Win32 interface on Windows and a GTK/WebKitGTK shell on Linux. Keep separate provider profiles, automatic quotas, and a compact floating pill or circle. **Ubuntu/Linux support is beta.**
 
 <p>
   <a href="https://muhameho.github.io/Muisland/"><img src="docs/images/try-demo.svg" width="252" height="48" alt="Try interactive demo" /></a>
 </p>
 
-> Unofficial project. Muisland is not affiliated with or endorsed by Anthropic. Claude's local storage and usage endpoint may change.
+> Unofficial project. Muisland is not affiliated with or endorsed by Anthropic or OpenAI. Local authentication formats and usage protocols can change.
 
 [Gallery](#gallery) · [Interactive demo](#interactive-demo) · [Getting started](#build-and-run) · [Controls](#controls-and-motion) · [Privacy](#usage-and-privacy) · [Troubleshooting](#troubleshooting)
 
@@ -78,7 +78,9 @@ Start-Process .\docs\demo\index.html
 
 ## Features
 
-- **Multiple accounts** — save up to 64 accounts, give them names, and remove them from the island.
+- **Claude / Codex tabs** — keep provider profiles and usage separate.
+- **Themes** — Lavender, Ocean, Sunset, and Graphite, shared across providers.
+- **Multiple accounts** — save up to 64 accounts per provider, give them names, and remove them from the island.
 - **Confirmed switching** — review the target account before switching. Selecting the current account shows that it is already logged in.
 - **Automatic usage** — view the 5-hour and weekly quotas, percentage used, and reset countdowns.
 - **Pill or circle** — a draggable circle with an M and a usage ring, plus a separate hover bubble that chooses the available side of the screen.
@@ -90,7 +92,7 @@ Start-Process .\docs\demo\index.html
 
 ## Build and run
 
-### Requirements
+### Windows
 
 - Windows with Claude Desktop installed and signed in.
 - [Rust](https://www.rust-lang.org/tools/install), using the MSVC toolchain.
@@ -110,7 +112,48 @@ cargo build --release
 
 The output is `target\release\muisland.exe`. Build outputs are excluded from Git; `Cargo.lock` is tracked for reproducible dependency versions.
 
-## Using accounts
+### Ubuntu / Debian and other Linux desktops (beta)
+
+Ubuntu is a Linux distribution. The Linux port targets Ubuntu 24.04 first, with equivalent packages needed on other distributions. The launcher embeds its Python runtime sources and UI; it uses the system Python and GTK libraries rather than replacing the Windows renderer.
+
+```bash
+sudo apt update
+sudo apt install build-essential pkg-config python3 python3-gi python3-gi-cairo \
+  python3-cryptography gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libsecret-tools
+# Install Rust using rustup if cargo is not available.
+git clone https://github.com/muhameho/Muisland.git
+cd Muisland
+bash build.sh
+./target/release/muisland
+```
+
+To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.4.0_<architecture>.deb`. The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
+
+- **X11:** floating placement, corner clamping, dragging, and an independent hover window.
+- **Wayland sessions with XWayland:** the port selects the X11 backend when `DISPLAY` is available, retaining those placement controls.
+- **Native Wayland without XWayland:** compositor rules can restrict absolute positioning and always-on-top. Full floating parity is not guaranteed.
+- **Storage:** an unlocked Secret Service desktop keyring is required. There is no plaintext fallback for Muisland's own profiles.
+- **Claude Desktop:** the official Linux beta supports Ubuntu/Debian. Detection uses `$XDG_CONFIG_HOME/Claude`, `claude`, or `claude-desktop`; `MUISLAND_CLAUDE_CONFIG` can specify the correct profile directory. Linux credential decryption supports Chromium v10/v11 safe-storage formats and fails safely for unrecognized formats.
+
+Linux builds, encrypted-backend tests, and GTK/WebKit startup plus native-bridge smoke tests run on Ubuntu. A real signed-in Claude session on Linux and every desktop compositor have **not** been verified. See [Anthropic's Linux requirements](https://support.claude.com/en/articles/10065433-install-claude-desktop).
+
+## Providers
+
+Choose **Claude** or **Codex** above the account list. Tabs have separate saved profiles and quota caches; changing tabs does not switch either app's real account. Size controls and the theme are shared preferences. Provider changes are blocked while an account operation is running.
+
+### Codex support and limits
+
+Codex support uses ChatGPT **file-based authentication** in `$CODEX_HOME/auth.json` (default: `~/.codex/auth.json`) and the official Codex app-server protocol:
+
+- **Save** encrypts the current Codex file sign-in in Muisland's own storage.
+- **Switch**, after confirmation, backs up and replaces that sign-in cache. **New CLI sessions** use the new cache. Existing processes must reload/restart; a separately authenticated Desktop host may retain its own login. Muisland does not terminate Codex or a running agent automatically.
+- **Usage** comes from `account/rateLimits/read`, using an isolated app-server process with ephemeral credentials and analytics disabled. No inference turns, chats, or project files are sent. Session and extended limits are account-policy dependent; missing windows are unavailable.
+- Install Codex CLI on `PATH`, or set `MUISLAND_CODEX_BIN` to its executable. Windows also detects the installed Codex app's bundled CLI.
+- API-key-only, OS-keyring-only, and externally managed Desktop authentication are not interchangeable with this file-cache switcher. Muisland does not change your credential-storage policy or export tokens through the UI.
+
+See the official [authentication](https://learn.chatgpt.com/docs/auth) and [app-server](https://learn.chatgpt.com/docs/app-server) documentation. Switching authentication does not transfer chats, threads, workspaces, or project ownership between accounts.
+
+## Using Claude accounts
 
 1. Sign in to the desired account in Claude Desktop.
 2. Choose **Save** on the intended slot in Muisland. Use **+ Add account** for another slot.
@@ -127,7 +170,7 @@ Muisland does not force-kill Claude. If Claude remains in the system tray, quit 
 
 ## Appearance
 
-Open the header **gear icon** to access Preferences:
+Open the header **gear icon** to access Preferences. Choose **Lavender**, **Ocean**, **Sunset**, or **Graphite**, then adjust the three independent sizes:
 
 | Setting | Range | Controls |
 | --- | --- | --- |
@@ -159,7 +202,7 @@ The native window uses spring motion for opening and resizing, a short fade for 
 
 ## Usage and privacy
 
-Usage refreshes automatically: approximately every **30 seconds** for the active account and **2 minutes** for other saved accounts. This is polling, not a server-pushed live stream. Errors trigger backoff, rate limits honor `Retry-After`, and expired authentication pauses retries. A missing reading is shown as unavailable rather than 0%.
+Usage refreshes automatically: approximately every **30 seconds** for the active account and **2 minutes** for other saved accounts. This is polling, not a server-pushed live stream. Windows polls the selected provider tab and schedules a new read when you change tabs; Linux polls saved profiles for both providers. Errors trigger backoff, rate limits honor `Retry-After`, and expired authentication pauses retries. A missing reading is shown as unavailable rather than 0%.
 
 Percentages mean **quota consumed**. Reset countdowns indicate when the quota resets, not guaranteed remaining working hours.
 
@@ -191,18 +234,21 @@ Local checkpoints do not export cloud chats, copy external project folders, or c
 
 ## Local storage
 
-For compatibility, Muisland stores its data in `%LOCALAPPDATA%\ClaudeIsland`:
+On Windows, Muisland keeps `%LOCALAPPDATA%\ClaudeIsland` for compatibility:
 
 | Path | Contents |
 | --- | --- |
 | `account-N` | Encrypted sign-in snapshots |
-| `muisland-settings.bin` | Encrypted account names, cached usage, and preferences |
+| `muisland-settings.bin` | Encrypted provider profiles, cached usage, themes, and preferences |
+| `codex` | Separately encrypted Codex snapshots and the prior sign-in backup |
 | `local-backups` | Encrypted local checkpoints |
 | `saved-versions` | Previous encrypted sign-in snapshots |
 | `removed-accounts` | Archived account snapshots |
 | `recovered` | Decrypted recovery output |
 
-Encryption uses Windows DPAPI and is tied to the current Windows user. It does not protect against other software running as that user. Treat snapshots, backups, and recovered files as sensitive; do not commit or share them.
+On Linux, data is stored in `$XDG_DATA_HOME/muisland` (default `~/.local/share/muisland`). Settings, provider snapshots, archived profiles, and backup chunks use AES-256-GCM; the random master key is stored in Secret Service. Files are private to the user (data root 0700, encrypted files 0600). Recovery output is deliberately decrypted in a separate `recovered` directory.
+
+Windows encryption uses DPAPI and is tied to the current Windows user. It does not protect against other software running as that user. Treat snapshots, backups, and recovered files as sensitive; do not commit or share them.
 
 ## Troubleshooting
 
@@ -249,14 +295,19 @@ cargo test
 cargo build --release
 ```
 
-Add `--offline` to Cargo commands when dependencies are already cached. Tests cover account isolation, confirmation ordering, backup safety, quota parsing, independent sizes, screen bounds, and floating-position restoration.
+Add `--offline` to Cargo commands when dependencies are already cached. Linux backend tests run with `python3 -m unittest discover -s linux -v`. The smoke check uses `dbus-run-session -- xvfb-run -a ./target/release/muisland --preview --smoke-test`.
+
+Tests cover account isolation, confirmation ordering, backup safety, quota parsing, independent sizes, screen bounds, and floating-position restoration.
 
 | Launch option | Purpose |
 | --- | --- |
 | `--preview` | Sample accounts and usage, without reading credentials, contacting the usage API, changing Claude, or persisting preferences |
 | `--no-network` | Run with usage requests disabled for that process |
 | `--render-previews <folder>` | Export sample UI renderings without opening a window |
-| `--check-usage` | Read-only usage diagnostic for the current account; does not print credentials |
+| `--check-usage` | Windows: read-only Claude usage diagnostic; does not print credentials |
+| `--check-codex-usage` | Windows: read-only Codex quota diagnostic; does not save a profile or print credentials |
+| `--check-env` | Linux: verify installed GUI and crypto dependencies |
+| `--smoke-test` | Linux: sample-only GTK/WebKit startup and native bridge check |
 
 Before contributing, keep local data and build output out of commits and scan the history with [Gitleaks](https://github.com/gitleaks/gitleaks):
 
@@ -272,6 +323,11 @@ gitleaks git . --redact
 | `src/accounts.rs` | Account slots, names, and saved preferences |
 | `src/profiles.rs` | Claude profile snapshots and close/reopen handling |
 | `src/usage.rs` | Account-bound usage requests and quota parsing |
+| `src/codex.rs` | Codex encrypted file profiles and official app-server quota client (Windows) |
+| `linux/backend.py` | Linux encrypted storage, provider operations, backups, and quota clients |
+| `linux/app.py` | GTK/WebKit floating, menu, and hover windows |
+| `linux/island.html` | Linux interface and native-message bridge |
+| `build.sh` | Linux binary and Debian-package builds |
 | `src/polling.rs` | Refresh timing, retries, and backoff |
 | `src/backup.rs` | Encrypted local checkpoints and separate-folder recovery |
 | `demo/index.html` | Standalone browser playground with sample data |

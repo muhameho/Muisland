@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none';script-src 'unsafe-inline';style-src 'unsafe-inline';connect-src 'none';base-uri 'none';form-action 'none'"
+    />
+    <title>Muisland</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, "Noto Sans", "Segoe UI", sans-serif;
+        --bg: #0f1018;
+        --panel: #1c1e2c;
+        --button: #292b3b;
+        --accent: #c3b2ff;
+        --text: #f1f2f9;
+        --muted: #9b9fb3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+        color: var(--text);
+        overflow: hidden;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        border: 0;
+        border-radius: 12px;
+        background: var(--button);
+        color: var(--text);
+        cursor: pointer;
+        padding: 11px 15px;
+        font-size: 12px;
+        font-weight: 600;
+        transition:
+          background 0.16s,
+          transform 0.16s,
+          filter 0.16s;
+      }
+      button:hover {
+        filter: brightness(1.15);
+        transform: translateY(-1px);
+      }
+      button:active {
+        transform: scale(0.97);
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .primary {
+        background: var(--accent);
+        color: #191720;
+      }
+      .danger {
+        color: #f1b8bd;
+        background: #38242d;
+      }
+      .quiet {
+        background: transparent;
+        color: var(--muted);
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: wait;
+      }
+      .surface {
+        width: 420px;
+        height: 628px;
+        border-radius: 30px;
+        background: var(--bg);
+        overflow: hidden;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+      }
+      .header {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .brand {
+        font-size: 17px;
+        font-weight: 600;
+        flex: 1;
+      }
+      .logo {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--button);
+        color: var(--accent);
+        display: grid;
+        place-items: center;
+        font-size: 19px;
+        font-weight: 300;
+      }
+      .icon {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        font-size: 18px;
+      }
+      .icon.active {
+        color: var(--accent);
+      }
+      .providers {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin: 16px 8px 6px;
+      }
+      .providers button {
+        height: 34px;
+        padding: 0;
+      }
+      .providers .active {
+        background: var(--accent);
+        color: #191720;
+      }
+      .content {
+        padding: 0 8px;
+        flex: 1;
+        overflow: auto;
+        scrollbar-width: thin;
+        animation: enter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .content.enter-options {
+        animation: optionsIn 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .content.exit-options {
+        animation: optionsOut 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes enter {
+        from {
+          opacity: 0.4;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes optionsIn {
+        from {
+          opacity: 0;
+          transform: translateX(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+      @keyframes optionsOut {
+        from {
+          opacity: 0;
+          transform: translateX(-20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+      h1 {
+        font-size: 26px;
+        font-weight: 550;
+        letter-spacing: -0.7px;
+        margin: 24px 0 4px;
+      }
+      .subtitle,
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+      .subtitle {
+        margin: 0 0 16px;
+      }
+      .account {
+        background: var(--panel);
+        border-radius: 22px;
+        padding: 16px;
+        margin: 10px -4px;
+      }
+      .account-top {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .avatar {
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        background: var(--button);
+        color: var(--accent);
+        font-size: 13px;
+      }
+      .account-name {
+        flex: 1;
+        min-width: 0;
+      }
+      .account-name button {
+        display: block;
+        padding: 0;
+        background: transparent;
+        text-align: left;
+        font-size: 14px;
+        max-width: 165px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .account-name small {
+        display: block;
+        font-size: 9px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .tiny {
+        padding: 8px 10px;
+        font-size: 11px;
+      }
+      .quotas {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-top: 15px;
+      }
+      .quota-title {
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .track {
+        background: var(--button);
+        height: 3px;
+        overflow: hidden;
+        border-radius: 8px;
+        margin: 6px 0 7px;
+      }
+      .fill {
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.35s;
+      }
+      .reset {
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .accounts-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 18px 0;
+      }
+      .account-error {
+        font-size: 10px;
+        color: #f1b8bd;
+        margin-top: 9px;
+        line-height: 1.5;
+      }
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 15px;
+        background: var(--panel);
+        border-radius: 17px;
+        font-size: 12px;
+        margin: 10px 0;
+      }
+      .toggle {
+        appearance: none;
+        width: 36px;
+        height: 20px;
+        background: var(--button);
+        border-radius: 20px;
+        cursor: pointer;
+        position: relative;
+        transition: background 0.2s;
+      }
+      .toggle:checked {
+        background: var(--accent);
+      }
+      .toggle:before {
+        content: "";
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        left: 3px;
+        top: 3px;
+        border-radius: 50%;
+        background: var(--text);
+        transition: transform 0.2s;
+      }
+      .toggle:checked:before {
+        transform: translateX(16px);
+        background: var(--bg);
+      }
+      .footer {
+        font-size: 9px;
+        color: var(--muted);
+        padding: 14px 8px 0;
+        line-height: 1.5;
+        min-height: 35px;
+      }
+      .themes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px;
+        margin: 14px 0;
+      }
+      .themes button {
+        font-size: 11px;
+        text-align: left;
+        padding: 9px;
+      }
+      .themes .selected {
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+      .swatch {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+      .size-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 12px;
+        padding: 11px 0;
+        gap: 8px;
+      }
+      .size-row input {
+        width: 118px;
+        accent-color: var(--accent);
+      }
+      .size-row output {
+        font-size: 10px;
+        color: var(--accent);
+        width: 32px;
+        text-align: right;
+      }
+      .row-buttons {
+        display: flex;
+        gap: 8px;
+        margin: 17px 0;
+      }
+      .row-buttons button {
+        flex: 1;
+      }
+      .wide {
+        width: 100%;
+        margin: 5px 0;
+      }
+      .name-input {
+        width: 100%;
+        background: var(--panel);
+        border: 0;
+        border-radius: 13px;
+        color: var(--text);
+        padding: 13px;
+        font-size: 15px;
+        margin: 15px 0;
+      }
+      .confirm-copy {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.85;
+        margin: 20px 0 28px;
+      }
+      .selected-name {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .busy {
+        opacity: 0.65;
+        pointer-events: none;
+      }
+      .float {
+        width: 76px;
+        height: 76px;
+        background: var(--bg);
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        border: 0;
+        padding: 0;
+        position: relative;
+      }
+      .float:hover {
+        transform: none;
+        filter: none;
+      }
+      .float .m {
+        font-size: 25px;
+        font-weight: 300;
+        color: var(--text);
+      }
+      .float svg {
+        width: 60px;
+        height: 60px;
+        position: absolute;
+        transform: rotate(-90deg);
+      }
+      .float circle {
+        fill: none;
+        stroke: var(--button);
+        stroke-width: 2;
+      }
+      .float .meter {
+        stroke: var(--accent);
+        stroke-linecap: round;
+        transition: stroke-dashoffset 0.4s;
+      }
+      .float.pill {
+        border-radius: 29px;
+        width: 228px;
+        height: 58px;
+        display: flex;
+        gap: 10px;
+        padding: 14px 17px;
+        font-size: 17px;
+      }
+      .float.pill svg {
+        display: none;
+      }
+      .float.pill .m {
+        font-size: 19px;
+        color: var(--accent);
+      }
+      .pill-label {
+        display: none;
+      }
+      .pill .pill-label {
+        display: block;
+      }
+      .pill .plus {
+        margin-left: auto;
+      }
+      .bubble {
+        width: 306px;
+        height: 206px;
+        border-radius: 23px;
+        padding: 20px;
+        background: var(--panel);
+        cursor: pointer;
+        animation: bubbleIn 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .bubble h2 {
+        font-size: 16px;
+        font-weight: 650;
+        margin: 0;
+      }
+      .bubble .quota {
+        margin-top: 17px;
+      }
+      .bubble .rule {
+        height: 1px;
+        background: var(--button);
+        margin: 15px 0;
+      }
+      .bubble .reset {
+        font-size: 10px;
+      }
+      .bubble .quota-title {
+        font-size: 11px;
+      }
+      @keyframes bubbleIn {
+        from {
+          opacity: 0;
+          transform: scale(0.94) translateX(8px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .reduce * {
+        transition: none !important;
+        animation: none !important;
+      }
+      body.preview {
+        background: #17121f;
+        padding: 20px;
+        min-height: 100vh;
+      }
+      body.preview .surface {
+        margin: auto;
+      }
+      .preview-label {
+        font-size: 11px;
+        color: var(--muted);
+        text-align: center;
+        margin: 0 0 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      const role =
+        window.ISLAND_ROLE ||
+        new URLSearchParams(location.search).get("role") ||
+        "menu";
+      const themes = [
+        {
+          name: "Lavender",
+          accent: "#c3b2ff",
+          bg: "#0f1018",
+          panel: "#1c1e2c",
+          button: "#292b3b",
+        },
+        {
+          name: "Ocean",
+          accent: "#7fc6ff",
+          bg: "#0d121a",
+          panel: "#17212d",
+          button: "#27374b",
+        },
+        {
+          name: "Sunset",
+          accent: "#ffb396",
+          bg: "#1b1314",
+          panel: "#301f22",
+          button: "#493039",
+        },
+        {
+          name: "Graphite",
+          accent: "#e1e3ea",
+          bg: "#161616",
+          panel: "#272727",
+          button: "#383838",
+        },
+      ];
+      let data = {
+          provider: "claude",
+          theme: 0,
+          accounts: [],
+          settings: {
+            menu_scale: 1,
+            float_scale: 1,
+            bubble_scale: 1,
+            circle: true,
+            reduced_motion: false,
+            protect_local: false,
+          },
+        },
+        view = "home",
+        page = 0,
+        editing = 0,
+        pending = null,
+        lastView = "home",
+        notice = "",
+        counter = 0,
+        callbacks = new Map();
+      const native = !!(
+          window.webkit &&
+          window.webkit.messageHandlers &&
+          window.webkit.messageHandlers.muisland
+        ),
+        root = document.getElementById("root");
+      const esc = (s) =>
+        String(s).replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      function invoke(action, payload = {}) {
+        if (!native) return mock(action, payload);
+        return new Promise((resolve, reject) => {
+          let id = ++counter;
+          callbacks.set(id, { resolve, reject });
+          window.webkit.messageHandlers.muisland.postMessage(
+            JSON.stringify({
+              id,
+              action,
+              data: { provider: data.provider, ...payload },
+            }),
+          );
+        });
+      }
+      window.nativeResult = (id, ok, value) => {
+        let cb = callbacks.get(id);
+        if (cb) {
+          callbacks.delete(id);
+          ok ? cb.resolve(value) : cb.reject(new Error(value));
+        }
+      };
+      window.nativePush = (value) => {
+        if (JSON.stringify(value) === JSON.stringify(data)) return;
+        const field =
+          document.activeElement?.id === "accountName"
+            ? {
+                text: document.activeElement.value,
+                start: document.activeElement.selectionStart,
+                end: document.activeElement.selectionEnd,
+              }
+            : null;
+        data = value;
+        if (value.error) {
+          notice = value.error;
+          view = "notice";
+        }
+        render();
+        if (field && view === "edit") {
+          const input = document.getElementById("accountName");
+          if (input) {
+            input.value = field.text;
+            input.focus();
+            input.setSelectionRange(field.start, field.end);
+          }
+        }
+      };
+      async function command(action, payload = {}) {
+        try {
+          let result = await invoke(action, payload);
+          if (result && result.settings) data = result;
+          render();
+          return result;
+        } catch (e) {
+          notice = e.message;
+          view = "notice";
+          render();
+        }
+      }
+      function resetTime(value) {
+        if (!value) return "Reset unavailable";
+        let t = Math.max(0, Math.floor(value - Date.now() / 1000));
+        return t > 86400
+          ? `Resets in ${Math.floor(t / 86400)}d ${Math.floor((t % 86400) / 3600)}h`
+          : `Resets in ${Math.floor(t / 3600)}h ${Math.floor((t % 3600) / 60)}m`;
+      }
+      function quota(label, w) {
+        if (data.provider === "codex")
+          label = label === "5h" ? "Session" : "Extended";
+        return `<div class="quota"><div class="quota-title">${label} · ${w ? Math.round(w.used) + "% used" : "—"}</div><div class="track"><div class="fill" style="width:${w ? w.used : 0}%"></div></div><div class="reset">${w ? resetTime(w.resets) : "Not available"}</div></div>`;
+      }
+      function active() {
+        return data.accounts.find((a) => a.active);
+      }
+      function render() {
+        const t = themes[data.theme % 4];
+        for (const key of ["accent", "bg", "panel", "button"])
+          document.documentElement.style.setProperty("--" + key, t[key]);
+        document.documentElement.classList.toggle(
+          "reduce",
+          data.settings.reduced_motion,
+        );
+        document.body.style.zoom =
+          role === "float"
+            ? data.settings.float_scale
+            : role === "bubble"
+              ? data.settings.bubble_scale
+              : data.settings.menu_scale;
+        if (role === "float") {
+          const u = active()?.usage;
+          const used = u?.session?.used ?? u?.weekly?.used ?? 0;
+          root.innerHTML = `<button class="float ${data.settings.circle ? "" : "pill"}" aria-label="Open Muisland"><svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="27"/><circle class="meter" cx="30" cy="30" r="27" stroke-dasharray="169.65" stroke-dashoffset="${169.65 * (1 - used / 100)}"/></svg><span class="m">M</span><span class="pill-label">Muisland</span><span class="pill-label plus">+</span></button>`;
+          return;
+        }
+        if (role === "bubble") {
+          const a = active();
+          root.innerHTML = `<div class="bubble" role="button" tabindex="0"><h2>${esc(a?.name || "No active saved account")}</h2><div class="hint">${esc(a?.usage?.plan || data.provider)} · ${data.preview ? "Sample usage" : "Automatic usage"}</div><div class="rule"></div>${quota("5h", a?.usage?.session)}${quota("7d", a?.usage?.weekly)}</div>`;
+          return;
+        }
+        let content = "";
+        let cls =
+          view === "prefs" && lastView !== "prefs"
+            ? "enter-options"
+            : view !== "prefs" && lastView === "prefs"
+              ? "exit-options"
+              : "";
+        lastView = view;
+        if (view === "home") {
+          content = `<h1>Your accounts.</h1><p class="subtitle">${data.provider === "codex" ? "Codex file sign-ins · restart sessions after switching" : "Live limits. A seamless switch."}</p>`;
+          content += data.accounts
+            .slice(page * 2, page * 2 + 2)
+            .map(
+              (a) =>
+                `<article class="account"><div class="account-top"><span class="avatar">${a.slot}</span><div class="account-name"><button data-switch="${a.slot}">${esc(a.name)}</button><small>${a.draft ? "Draft · not saved" : a.active ? "Logged in" : a.saved ? "Saved" : "Not saved"}</small></div><button class="tiny" data-edit="${a.slot}" aria-label="Account details">☷</button><button class="tiny" data-save="${a.slot}">Save</button></div><div class="quotas">${quota("5h", a.usage?.session)}${quota("7d", a.usage?.weekly)}</div>${a.error ? `<div class="account-error">${esc(a.error)}</div>` : ""}</article>`,
+            )
+            .join("");
+          if (!data.accounts.length)
+            content +=
+              '<div class="confirm-copy">Add your first account, then save the sign-in currently used by the selected app.</div>';
+          content += `<div class="accounts-actions"><span><button class="tiny quiet" data-page="-1">‹</button><small>${page + 1}/${Math.max(1, Math.ceil(data.accounts.length / 2))}</small><button class="tiny quiet" data-page="1">›</button></span><button data-add>+ Add account</button></div>`;
+          if (data.provider === "claude")
+            content += `<label class="toggle-row">Back up local data before switch<input class="toggle" type="checkbox" data-toggle="protect_local" ${data.settings.protect_local ? "checked" : ""}></label>`;
+        } else if (view === "prefs") {
+          content = `<h1>Make it yours.</h1><p class="subtitle">Independent sizes · saved on this device</p><div class="themes">${themes.map((x, i) => `<button data-theme="${i}" class="${i === data.theme ? "selected" : ""}"><span class="swatch" style="background:${x.accent}"></span>${x.name}</button>`).join("")}</div>`;
+          content += [
+            ["menu_scale", "Menu size", 0.75, 1.6],
+            ["float_scale", "Floating size", 0.6, 1.8],
+            ["bubble_scale", "Hover bubble size", 0.85, 1.6],
+          ]
+            .map(
+              ([key, label, min, max]) =>
+                `<label class="size-row">${label}<input type="range" data-size="${key}" min="${min}" max="${max}" step=".05" value="${data.settings[key]}"><output>${Math.round(data.settings[key] * 100)}%</output></label>`,
+            )
+            .join("");
+          content += `<label class="toggle-row">Circle with usage ring<input class="toggle" type="checkbox" data-toggle="circle" ${data.settings.circle ? "checked" : ""}></label><label class="toggle-row">Reduce motion<input class="toggle" type="checkbox" data-toggle="reduced_motion" ${data.settings.reduced_motion ? "checked" : ""}></label><button class="wide" data-operation="rollback">Restore previous sign-in</button>${data.provider === "claude" ? '<button class="wide" data-operation="recover">Recover local backup to folder</button>' : ""}<div class="row-buttons"><button data-back>Back</button><button data-quit>Quit</button></div>`;
+        } else if (view === "edit") {
+          let a = data.accounts.find((a) => a.slot === editing);
+          if (!a) {
+            view = "home";
+            render();
+            return;
+          }
+          content = `<h1>Account details</h1><p class="subtitle">${a.draft ? "Temporary until a successful Save account" : "Name · up to 32 characters"}</p><input id="accountName" class="name-input" maxlength="32" value="${esc(a.name)}" aria-label="Account name"><div class="quotas">${quota("5h", a.usage?.session)}${quota("7d", a.usage?.weekly)}</div><p class="hint">${a.draft ? "Leaving without saving discards this draft." : "Your sign-in stays on this computer."}</p><button class="wide danger" data-remove="${a.slot}">${a.draft ? "Discard draft" : "Remove account"}</button><div class="row-buttons"><button data-back>Back</button><button class="primary" data-name>${a.draft ? "Save account" : "Save name"}</button></div>`;
+        } else if (view === "confirm") {
+          let a = data.accounts.find((a) => a.slot === pending.slot);
+          let title = {
+            save: "Save this account?",
+            switch: "Switch account?",
+            remove: "Remove this account?",
+            rollback: "Restore previous sign-in?",
+            recover: "Recover local backup?",
+          }[pending.action];
+          content = `<h1>${title}</h1><p class="selected-name">${esc(a?.name || "")}</p><p class="confirm-copy">${pending.action === "remove" ? "The encrypted sign-in is archived locally. Your cloud chats and files are not deleted." : data.provider === "codex" ? "This changes only the Codex file sign-in cache. New CLI sessions use it; restart open Codex sessions to reload. The Desktop host may retain its own login." : pending.action === "recover" ? "Decrypt the latest local checkpoint into a separate folder. Claude’s live files will not be overwritten." : "Claude will close normally and reopen. Local tasks may stop and unsaved work may be lost. Nothing changes until you confirm."}</p><div class="row-buttons"><button data-cancel>Cancel</button><button class="primary" data-confirm>Confirm</button></div>`;
+        } else
+          content = `<h1>Account status</h1><p class="confirm-copy">${esc(notice)}</p><button class="wide" ${data.error ? "data-quit" : "data-back"}>${data.error ? "Quit Muisland" : "Back"}</button>`;
+        root.innerHTML = `${native ? "" : '<p class="preview-label">Linux interface preview · invented accounts · no native operations</p>'}<section class="surface"><header class="header"><span class="logo">M</span><span class="brand">Muisland</span><button class="icon ${view === "prefs" ? "active" : ""}" data-prefs aria-label="Preferences">⚙</button><button class="icon" data-close aria-label="Collapse">−</button></header><nav class="providers"><button class="${data.provider === "claude" ? "active" : ""}" data-provider="claude">Claude</button><button class="${data.provider === "codex" ? "active" : ""}" data-provider="codex">Codex</button></nav><main class="content ${cls} ${data.busy ? "busy" : ""}">${content}</main><footer class="footer">${data.busy ? "Working on your account…" : data.preview ? "Preview · sample data" : data.provider === "codex" ? "Codex · file-auth profiles · 30s active / 2m others" : "Claude · 30s active / 2m other accounts"}</footer></section>`;
+      }
+      function confirm(action, slot) {
+        pending = { action, slot };
+        view = "confirm";
+        render();
+      }
+      root.addEventListener("click", async (e) => {
+        if (role === "float" || role === "bubble") {
+          await invoke("view", { view: "menu" });
+          return;
+        }
+        const b = e.target.closest("button");
+        if (!b) {
+          if (e.target.closest(".header"))
+            await invoke("view", { view: "float" });
+          return;
+        }
+        if (b.dataset.provider) {
+          await command("provider", { provider: b.dataset.provider });
+          view = "home";
+          page = 0;
+          render();
+        } else if (b.hasAttribute("data-prefs")) {
+          view = view === "prefs" ? "home" : "prefs";
+          render();
+        } else if (b.hasAttribute("data-close"))
+          await invoke("view", { view: "float" });
+        else if (b.hasAttribute("data-add")) {
+          await command("add");
+          editing = data.accounts.at(-1).slot;
+          view = "edit";
+          render();
+        } else if (b.dataset.edit) {
+          editing = +b.dataset.edit;
+          view = "edit";
+          render();
+        } else if (b.dataset.page) {
+          page = Math.max(
+            0,
+            Math.min(
+              Math.ceil(data.accounts.length / 2) - 1,
+              page + +b.dataset.page,
+            ),
+          );
+          render();
+        } else if (b.dataset.save) confirm("save", +b.dataset.save);
+        else if (b.dataset.switch) {
+          let a = data.accounts.find((a) => a.slot === +b.dataset.switch);
+          if (a.active) {
+            notice = "This is the account currently logged in.";
+            view = "notice";
+            render();
+          } else if (!a.saved) {
+            notice = "Save this account before switching to it.";
+            view = "notice";
+            render();
+          } else confirm("switch", a.slot);
+        } else if (b.dataset.theme) {
+          await command("settings", { theme: +b.dataset.theme });
+        } else if (b.hasAttribute("data-name")) {
+          let a = data.accounts.find((a) => a.slot === editing);
+          let result = await command("rename", {
+            slot: editing,
+            name: document.getElementById("accountName").value,
+          });
+          if (result) {
+            if (a.draft) confirm("save", editing);
+            else {
+              view = "home";
+              render();
+            }
+          }
+        } else if (b.dataset.remove) confirm("remove", +b.dataset.remove);
+        else if (b.dataset.operation) confirm(b.dataset.operation);
+        else if (b.hasAttribute("data-back") || b.hasAttribute("data-cancel")) {
+          await command("discard");
+          view = "home";
+          page = Math.min(
+            page,
+            Math.max(0, Math.ceil(data.accounts.length / 2) - 1),
+          );
+          render();
+        } else if (b.hasAttribute("data-confirm")) {
+          const op = pending;
+          data.busy = true;
+          render();
+          let result = await command(op.action, {
+            slot: op.slot,
+            confirmed: true,
+          });
+          data.busy = false;
+          if (result) {
+            notice = result.folder
+              ? "Backup recovered to " + result.folder
+              : op.action === "switch" && data.provider === "codex"
+                ? "Codex sign-in cache changed. Restart existing sessions to reload it."
+                : "";
+            view = notice ? "notice" : "home";
+            render();
+          }
+        } else if (b.hasAttribute("data-quit")) await invoke("quit");
+      });
+      root.addEventListener("change", (e) => {
+        if (e.target.dataset.toggle)
+          command("settings", { [e.target.dataset.toggle]: e.target.checked });
+        if (e.target.dataset.size)
+          command("settings", { [e.target.dataset.size]: +e.target.value });
+      });
+      root.addEventListener("input", (e) => {
+        if (e.target.dataset.size)
+          e.target.nextElementSibling.value =
+            Math.round(e.target.value * 100) + "%";
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          if (view !== "home") {
+            command("discard");
+            view = "home";
+            render();
+          } else invoke("view", { view: "float" });
+        }
+        if (e.key === "Enter" && (role === "float" || role === "bubble"))
+          invoke("view", { view: "menu" });
+      });
+      document.addEventListener("pointerenter", () => {
+        if (role !== "menu") invoke("hover", { inside: true });
+      });
+      document.addEventListener("pointerleave", () => {
+        if (role !== "menu") invoke("hover", { inside: false });
+      });
+      const mockProfiles = {
+        claude: [
+          {
+            slot: 1,
+            name: "Personal",
+            active: true,
+            saved: true,
+            usage: {
+              session: { used: 28, resets: Date.now() / 1000 + 7200 },
+              weekly: { used: 46, resets: Date.now() / 1000 + 259200 },
+            },
+          },
+        ],
+        codex: [
+          {
+            slot: 1,
+            name: "Development",
+            active: true,
+            saved: true,
+            usage: {
+              session: { used: 34, resets: Date.now() / 1000 + 10800 },
+              weekly: { used: 51, resets: Date.now() / 1000 + 259200 },
+            },
+          },
+        ],
+      };
+      async function mock(action, payload) {
+        if (action === "provider") data.provider = payload.provider;
+        if (action === "settings")
+          (Object.assign(data.settings, payload),
+            (data.theme = payload.theme ?? data.theme));
+        if (action === "add")
+          mockProfiles[data.provider].push({
+            slot: mockProfiles[data.provider].length + 1,
+            name: "New account",
+            draft: true,
+          });
+        if (action === "discard")
+          mockProfiles[data.provider] = mockProfiles[data.provider].filter(
+            (a) => !a.draft,
+          );
+        if (action === "rename")
+          mockProfiles[data.provider].find(
+            (a) => a.slot === payload.slot,
+          ).name = payload.name;
+        if (action === "save")
+          Object.assign(
+            mockProfiles[data.provider].find((a) => a.slot === payload.slot),
+            { draft: false, saved: true },
+          );
+        if (action === "remove")
+          mockProfiles[data.provider] = mockProfiles[data.provider].filter(
+            (a) => a.slot !== payload.slot,
+          );
+        if (action === "switch")
+          mockProfiles[data.provider].forEach(
+            (a) => (a.active = a.slot === payload.slot),
+          );
+        data.accounts = mockProfiles[data.provider];
+        return data;
+      }
+      if (!native) {
+        document.body.classList.add("preview");
+        data.preview = true;
+        data.accounts = mockProfiles.claude;
+        render();
+      } else
+        invoke("state")
+          .then((v) => {
+            data = v;
+            render();
+          })
+          .catch((e) => {
+            notice = e.message;
+            view = "notice";
+            render();
+          });
+    </script>
+  </body>
+</html>

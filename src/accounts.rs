@@ -22,6 +22,9 @@ pub struct Account {
 #[derive(Clone)]
 pub struct Settings {
     pub accounts: Vec<Account>,
+    pub other_accounts: Vec<Account>,
+    pub provider: usize,
+    pub theme: usize,
     pub protect_local: bool,
     pub menu_scale: f32,
     pub float_scale: f32,
@@ -40,6 +43,9 @@ impl Default for Settings {
                     usage: None,
                 })
                 .collect(),
+            other_accounts: Vec::new(),
+            provider: 0,
+            theme: 0,
             protect_local: false,
             menu_scale: 1.0,
             float_scale: 1.0,
@@ -84,6 +90,15 @@ impl Settings {
                 });
             }
         }
+        if let Some(rows) = v["codex_accounts"].as_array() {
+            let codex = Self::from_value(&json!({"accounts":rows}));
+            result.other_accounts = codex.accounts;
+        }
+        result.provider = v["provider"].as_u64().unwrap_or(0).min(1) as usize;
+        result.theme = v["theme"].as_u64().unwrap_or(0).min(3) as usize;
+        if result.provider == 1 {
+            std::mem::swap(&mut result.accounts, &mut result.other_accounts);
+        }
         result.protect_local = v["protect_local"].as_bool().unwrap_or(false);
         let legacy = v["scale"].as_f64().filter(|n| n.is_finite()).unwrap_or(1.0);
         result.menu_scale = v["menu_scale"]
@@ -120,13 +135,22 @@ impl Settings {
         Some(i)
     }
     fn to_value(&self) -> Value {
-        let accounts: Vec<Value> = self
-            .accounts
-            .iter()
-            .filter(|a| !a.draft)
-            .map(|a| json!({"slot":a.slot,"name": a.name, "usage": a.usage.as_ref().map(Usage::to_cache)}))
-            .collect();
-        json!({"version":1,"accounts":accounts,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})
+        let rows = |list: &[Account]| -> Vec<Value> {
+            list.iter().filter(|a|!a.draft).map(|a|json!({"slot":a.slot,"name":a.name,"usage":a.usage.as_ref().map(Usage::to_cache)})).collect()
+        };
+        let (claude, codex) = if self.provider == 0 {
+            (&self.accounts, &self.other_accounts)
+        } else {
+            (&self.other_accounts, &self.accounts)
+        };
+        json!({"version":2,"accounts":rows(claude),"codex_accounts":rows(codex),"provider":self.provider,"theme":self.theme,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})
+    }
+    pub fn select_provider(&mut self, provider: usize) {
+        let provider = provider.min(1);
+        if self.provider != provider {
+            std::mem::swap(&mut self.accounts, &mut self.other_accounts);
+            self.provider = provider;
+        }
     }
     pub fn save(&self) -> io::Result<()> {
         let data = serde_json::to_vec(&self.to_value()).map_err(io::Error::other)?;
@@ -227,6 +251,23 @@ mod tests {
         let decoded = Settings::from_value(&settings.to_value());
         assert_eq!(decoded.accounts.len(), 3);
         assert_eq!(decoded.accounts[2].name, "A draft name");
+    }
+    #[test]
+    fn providers_have_separate_slots_and_survive_roundtrip() {
+        let mut settings = Settings::default();
+        settings.accounts[0].name = "Claude personal".into();
+        settings.select_provider(1);
+        assert!(settings.accounts.is_empty());
+        let i = settings.add_account().unwrap();
+        settings.accounts[i].draft = false;
+        settings.accounts[i].name = "Codex work".into();
+        settings.theme = 2;
+        let mut loaded = Settings::from_value(&settings.to_value());
+        assert_eq!(loaded.provider, 1);
+        assert_eq!(loaded.accounts[0].name, "Codex work");
+        assert_eq!(loaded.theme, 2);
+        loaded.select_provider(0);
+        assert_eq!(loaded.accounts[0].name, "Claude personal");
     }
     #[test]
     fn names_support_unicode_and_reject_controls() {

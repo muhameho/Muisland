@@ -1,22 +1,54 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 #[cfg(windows)]
 mod accounts;
 #[cfg(windows)]
 mod backup;
+#[cfg(windows)]
+mod codex;
 #[cfg(windows)]
 mod polling;
 #[cfg(windows)]
 mod profiles;
 #[cfg(windows)]
 mod usage;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn main() {
-    eprintln!("Muisland requires Windows");
+    use std::process::{Command, Stdio};
+    let bootstrap="import sys,json,types\np=json.load(sys.stdin)\nbackend=types.ModuleType('backend')\nsys.modules['backend']=backend\nexec(p['backend'],backend.__dict__)\nMUISLAND_HTML=p['html']\nexec(p['app'])";
+    let mut child = match Command::new("/usr/bin/python3")
+        .arg("-c")
+        .arg(bootstrap)
+        .args(std::env::args().skip(1))
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => {
+            eprintln!("Install Python 3 and the Linux dependencies listed in README.");
+            std::process::exit(1)
+        }
+    };
+    let payload = serde_json::json!({"backend":include_str!("../linux/backend.py"),"html":include_str!("../linux/island.html"),"app":include_str!("../linux/app.py")});
+    let result = serde_json::to_writer(child.stdin.take().unwrap(), &payload);
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        eprintln!("Could not initialize the Linux UI runtime.");
+        std::process::exit(1)
+    }
+    std::process::exit(child.wait().ok().and_then(|s| s.code()).unwrap_or(1));
 }
+#[cfg(not(any(windows, target_os = "linux")))]
+fn main() {
+    eprintln!("Muisland supports Windows and Linux.");
+    std::process::exit(1);
+}
+
 #[cfg(windows)]
 mod island {
     use crate::{
         accounts::{self, Settings},
+        codex,
         polling::{self, PollState},
         profiles,
         usage::{self, Usage, Window},
@@ -48,13 +80,36 @@ mod island {
         fn GlobalUnlock(handle: HANDLE) -> i32;
         fn GlobalSize(handle: HANDLE) -> usize;
     }
-    const BG: u32 = 0x0018100F;
-    const WHITE: u32 = 0x00F9F2F1;
-    const MUTED: u32 = 0x00B39F9B;
-    const ACCENT: u32 = 0x00FFB2C3;
-    const PANEL: u32 = 0x002C1E1C;
+    thread_local! {static ACTIVE_THEME:std::cell::Cell<usize>=const{std::cell::Cell::new(0)};}
+    fn colors() -> [u32; 5] {
+        match ACTIVE_THEME.with(|v| v.get()) {
+            1 => [0x001A120D, 0x00FAF2ED, 0x00B6A396, 0x00FFC67F, 0x002D2117],
+            2 => [0x0014131B, 0x00F0F2FC, 0x00AAA1BB, 0x0096B3FF, 0x00221F30],
+            3 => [0x00161616, 0x00F5F5F5, 0x00AAAAAA, 0x00EAE3E1, 0x00272727],
+            _ => [0x0018100F, 0x00F9F2F1, 0x00B39F9B, 0x00FFB2C3, 0x002C1E1C],
+        }
+    }
+    fn bg() -> u32 {
+        colors()[0]
+    }
+    fn white() -> u32 {
+        colors()[1]
+    }
+    fn muted() -> u32 {
+        colors()[2]
+    }
+    fn accent() -> u32 {
+        colors()[3]
+    }
+    fn panel_color() -> u32 {
+        colors()[4]
+    }
+    fn theme_name(index: usize) -> &'static str {
+        ["Lavender", "Ocean", "Sunset", "Graphite"][index.min(3)]
+    }
     const EW: f32 = 420.;
-    const EH: f32 = 536.;
+    const EH: f32 = 628.;
+    const BODY_OFFSET: i32 = 44;
     const PILL_W: f32 = 228.;
     const PILL_H: f32 = 58.;
     const CIRCLE: f32 = 76.;
@@ -75,11 +130,14 @@ mod island {
         SwitchConfirm(usize),
         Remove(usize, String),
     }
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
     enum Action {
         None,
         Toggle,
         Preferences,
+        ClaudeTab,
+        CodexTab,
+        Theme(usize),
         Back,
         Details(usize),
         Save(usize),
@@ -157,6 +215,7 @@ mod island {
         reveal: f32,
         hover: Action,
         hover_t: f32,
+        hover_levels: std::collections::HashMap<Action, f32>,
         focus: Action,
         down: Option<(i32, i32, Action)>,
         drag: bool,
@@ -461,7 +520,7 @@ mod island {
         } else if used.unwrap_or(0.) >= 70. {
             0x009FC5F2
         } else {
-            ACCENT
+            accent()
         };
         for y in ((cy - r - 5.) as i32).max(0)..((cy + r + 5.) as i32).min(height) {
             for x in ((cx - r - 5.) as i32).max(0)..((cx + r + 5.) as i32).min(width) {
@@ -485,7 +544,11 @@ mod island {
                 if total <= 0. {
                     continue;
                 }
-                let color = mix(0x00433532, accent, (colored / total).clamp(0., 1.));
+                let color = mix(
+                    mix(panel_color(), white(), 0.10),
+                    accent,
+                    (colored / total).clamp(0., 1.),
+                );
                 let offset = (y * bitmap.bmWidthBytes + x * 4) as usize;
                 for channel in 0..3 {
                     let foreground = ((color >> (channel * 8)) & 255) as f32;
@@ -506,6 +569,8 @@ mod island {
         add(Action::Toggle, 0, 0, EW as i32, 58);
         add(Action::Preferences, EW as i32 - 88, 12, 32, 34);
         add(Action::Toggle, EW as i32 - 46, 12, 32, 34);
+        add(Action::ClaudeTab, 24, 64, 182, 32);
+        add(Action::CodexTab, 214, 64, 182, 32);
         if s.transition < 0.9 || s.reveal < 0.9 {
             return b;
         }
@@ -528,7 +593,9 @@ mod island {
                     add(Action::Next, 68, 382, 36, 34)
                 }
                 add(Action::Add, 230, 382, 166, 34);
-                add(Action::Protect, 24, 432, 372, 48);
+                if s.settings.provider == 0 {
+                    add(Action::Protect, 24, 432, 372, 48);
+                }
             }
             View::Details(_) => {
                 add(Action::NameField, 24, 126, 372, 44);
@@ -546,7 +613,9 @@ mod island {
                 add(Action::Circle, 24, 280, 372, 48);
                 add(Action::Motion, 24, 334, 372, 48);
                 add(Action::Rollback, 24, 390, 372, 30);
-                add(Action::Recover, 24, 428, 372, 30);
+                if s.settings.provider == 0 {
+                    add(Action::Recover, 24, 428, 372, 30);
+                }
                 add(Action::Back, 24, 466, 170, 34);
                 add(Action::Quit, 206, 466, 190, 34);
             }
@@ -558,6 +627,25 @@ mod island {
             View::Confirm(_) | View::SwitchConfirm(_) => {
                 add(Action::Cancel, 24, 312, 120, 42);
                 add(Action::Confirm, 156, 312, 240, 42)
+            }
+        }
+        for button in b.iter_mut().skip(5) {
+            button.y += BODY_OFFSET
+                + if matches!(s.view, View::Preferences) {
+                    44
+                } else {
+                    0
+                };
+        }
+        if matches!(s.view, View::Preferences) {
+            for theme in 0..4 {
+                b.push(Button {
+                    action: Action::Theme(theme),
+                    x: 24 + theme as i32 * 95,
+                    y: 128 + BODY_OFFSET,
+                    w: 87,
+                    h: 34,
+                });
             }
         }
         b
@@ -573,11 +661,26 @@ mod island {
     fn hot(s: &State, a: Action) -> f32 {
         if s.focus == a {
             1.
-        } else if s.hover == a {
-            s.hover_t
         } else {
-            0.
+            s.hover_levels.get(&a).copied().unwrap_or(0.)
         }
+    }
+    fn animate_hover(s: &mut State, dt: f32) -> bool {
+        if s.hover != Action::None {
+            s.hover_levels.entry(s.hover).or_insert(0.);
+        }
+        let mut changed = false;
+        for (action, level) in &mut s.hover_levels {
+            let target = if *action == s.hover { 1. } else { 0. };
+            let old = *level;
+            *level += (target - *level) * (dt * 15.).min(1.);
+            if (*level - target).abs() < 0.005 {
+                *level = target;
+            }
+            changed |= old != *level;
+        }
+        s.hover_levels.retain(|_, level| *level > 0.);
+        changed
     }
     unsafe fn button(
         dc: Dc,
@@ -590,15 +693,20 @@ mod island {
         label: &str,
         primary: bool,
     ) {
+        let y = y - (hot(s, a) * 1.5).round() as i32;
         let pressed = s.down.is_some_and(|(_, _, down)| down == a) && s.hover == a;
         let d = if pressed { 1 } else { 0 };
         let danger = matches!(a, Action::Remove | Action::RemoveConfirm);
         let color = if danger {
             mix(0x00232834, 0x0031374C, hot(s, a))
         } else if primary {
-            mix(ACCENT, WHITE, hot(s, a) * 0.14)
+            mix(accent(), white(), hot(s, a) * 0.14)
         } else {
-            mix(0x00352926, 0x004B3938, hot(s, a))
+            mix(
+                mix(panel_color(), white(), 0.04),
+                mix(panel_color(), white(), 0.13),
+                hot(s, a),
+            )
         };
         let radius = if w == h {
             h / 2
@@ -643,9 +751,9 @@ mod island {
             if danger {
                 0x00B2B9F0
             } else if primary {
-                BG
+                bg()
             } else {
-                WHITE
+                white()
             },
             w - 12,
         );
@@ -657,14 +765,22 @@ mod island {
                 w - 24,
                 2,
                 1,
-                if primary && !danger { BG } else { ACCENT },
+                if primary && !danger { bg() } else { accent() },
             );
         }
     }
 
     unsafe fn toggle(dc: Dc, s: &State, a: Action, y: i32, label: &str, value: bool) {
-        panel(dc, 24, y, 372, 48, 16, mix(PANEL, 0x00413532, hot(s, a)));
-        text(dc, 38, y + 16, 13, 500, label, WHITE, 280);
+        panel(
+            dc,
+            24,
+            y,
+            372,
+            48,
+            16,
+            mix(panel_color(), 0x00413532, hot(s, a)),
+        );
+        text(dc, 38, y + 16, 13, 500, label, white(), 280);
         panel(
             dc,
             340,
@@ -672,7 +788,7 @@ mod island {
             40,
             18,
             9,
-            if value { ACCENT } else { 0x00574744 },
+            if value { accent() } else { 0x00574744 },
         );
         panel(
             dc,
@@ -681,7 +797,7 @@ mod island {
             14,
             14,
             7,
-            if value { BG } else { WHITE },
+            if value { bg() } else { white() },
         );
     }
     unsafe fn quota(dc: Dc, x: i32, y: i32, width: i32, label: &str, window: Option<&Window>) {
@@ -689,17 +805,25 @@ mod island {
         let title = window
             .map(|w| format!("{label} · {:.0}% used", w.used))
             .unwrap_or_else(|| format!("{label} · —"));
-        text(dc, x, y, 11, 600, &title, WHITE, width);
-        panel(dc, x, y + 18, width, 3, 1, 0x00433532);
+        text(dc, x, y, 11, 600, &title, white(), width);
+        panel(
+            dc,
+            x,
+            y + 18,
+            width,
+            3,
+            1,
+            mix(panel_color(), white(), 0.10),
+        );
         if let Some(w) = window {
             let color = if w.resets.is_some_and(|t| t <= now) {
-                MUTED
+                muted()
             } else if w.used >= 90. {
                 0x009BA7F0
             } else if w.used >= 70. {
                 0x009FC5F2
             } else {
-                ACCENT
+                accent()
             };
             let fill = (width as f64 * w.used / 100.) as i32;
             if fill > 0 {
@@ -715,7 +839,7 @@ mod island {
             &window
                 .map(|w| w.reset_label(now))
                 .unwrap_or_else(|| "Not available".into()),
-            MUTED,
+            muted(),
             width,
         );
     }
@@ -739,7 +863,7 @@ mod island {
     unsafe fn draw_view(dc: Dc, s: &State, view: &View) {
         match view {
             View::Home => {
-                text(dc, 24, 76, 24, 600, "Your accounts.", WHITE, 370);
+                text(dc, 24, 76, 24, 600, "Your accounts.", white(), 370);
                 text(
                     dc,
                     25,
@@ -747,14 +871,23 @@ mod island {
                     12,
                     400,
                     "Live limits. A seamless switch.",
-                    MUTED,
+                    muted(),
                     370,
                 );
                 if s.settings.accounts.is_empty() {
-                    panel(dc, 16, 126, 388, 238, 20, PANEL);
-                    panel(dc, 185, 165, 50, 50, 25, 0x00473732);
-                    mark(dc, 201, 181, 18, ACCENT);
-                    text(dc, 49, 239, 21, 600, "Your island starts here.", WHITE, 335);
+                    panel(dc, 16, 126, 388, 238, 20, panel_color());
+                    panel(dc, 185, 165, 50, 50, 25, mix(panel_color(), accent(), 0.18));
+                    mark(dc, 201, 181, 18, accent());
+                    text(
+                        dc,
+                        49,
+                        239,
+                        21,
+                        600,
+                        "Your island starts here.",
+                        white(),
+                        335,
+                    );
                     text(
                         dc,
                         36,
@@ -762,7 +895,7 @@ mod island {
                         12,
                         400,
                         "Add an account, then save your Claude sign-in.",
-                        MUTED,
+                        muted(),
                         350,
                     );
                 }
@@ -779,7 +912,7 @@ mod island {
                         388,
                         114,
                         20,
-                        mix(PANEL, 0x00433330, hot(s, Action::Switch(i)) * 0.8),
+                        mix(panel_color(), 0x00433330, hot(s, Action::Switch(i)) * 0.8),
                     );
                     panel(
                         dc,
@@ -789,13 +922,13 @@ mod island {
                         34,
                         17,
                         if s.active == Some(i) {
-                            0x005C4541
+                            mix(panel_color(), accent(), 0.25)
                         } else {
-                            0x00423330
+                            mix(panel_color(), white(), 0.08)
                         },
                     );
-                    text(dc, 39, y + 20, 15, 600, &(i + 1).to_string(), ACCENT, 25);
-                    text(dc, 75, y + 12, 15, 600, &account.name, WHITE, 213);
+                    text(dc, 39, y + 20, 15, 600, &(i + 1).to_string(), accent(), 25);
+                    text(dc, 75, y + 12, 15, 600, &account.name, white(), 213);
                     let sub = if s.preview {
                         "Preview · sample data".into()
                     } else if !s.saved[i] {
@@ -824,13 +957,13 @@ mod island {
                             "Saved · usage not yet read".into()
                         }
                     };
-                    text(dc, 75, y + 33, 10, 400, &sub, MUTED, 213);
+                    text(dc, 75, y + 33, 10, 400, &sub, muted(), 213);
                     button(dc, s, Action::Details(i), 296, y + 15, 28, 30, "", false);
                     adjustments(
                         dc,
                         303,
                         y + 25,
-                        mix(MUTED, WHITE, hot(s, Action::Details(i))),
+                        mix(muted(), white(), hot(s, Action::Details(i))),
                     );
                     button(dc, s, Action::Save(i), 329, y + 15, 60, 30, "Save", false);
                     quota(
@@ -838,7 +971,11 @@ mod island {
                         28,
                         y + 59,
                         164,
-                        "5h",
+                        if s.settings.provider == 1 {
+                            "Session"
+                        } else {
+                            "5h"
+                        },
                         account.usage.as_ref().and_then(|u| u.session.as_ref()),
                     );
                     quota(
@@ -846,7 +983,11 @@ mod island {
                         216,
                         y + 59,
                         176,
-                        "7d",
+                        if s.settings.provider == 1 {
+                            "Extended"
+                        } else {
+                            "7d"
+                        },
                         account.usage.as_ref().and_then(|u| u.weekly.as_ref()),
                     );
                 }
@@ -867,7 +1008,7 @@ mod island {
                     } else {
                         format!("{} / {}", s.page + 1, s.settings.accounts.len().div_ceil(2))
                     },
-                    MUTED,
+                    muted(),
                     100,
                 );
                 button(
@@ -881,18 +1022,31 @@ mod island {
                     "+ Add account",
                     false,
                 );
-                toggle(
-                    dc,
-                    s,
-                    Action::Protect,
-                    432,
-                    "Back up local data before switch",
-                    s.settings.protect_local,
-                );
+                if s.settings.provider == 0 {
+                    toggle(
+                        dc,
+                        s,
+                        Action::Protect,
+                        432,
+                        "Back up local data before switch",
+                        s.settings.protect_local,
+                    );
+                } else {
+                    text(
+                        dc,
+                        24,
+                        450,
+                        11,
+                        400,
+                        "Codex switches sign-ins; open sessions keep their work.",
+                        muted(),
+                        372,
+                    );
+                }
             }
             View::Details(i) => {
                 if let Some(a) = s.settings.accounts.get(*i) {
-                    text(dc, 24, 78, 24, 600, "Account details", WHITE, 370);
+                    text(dc, 24, 78, 24, 600, "Account details", white(), 370);
                     text(
                         dc,
                         25,
@@ -900,7 +1054,7 @@ mod island {
                         12,
                         400,
                         "Name · up to 32 characters",
-                        MUTED,
+                        muted(),
                         370,
                     );
                     panel(dc, 24, 126, 372, 44, 12, 0x00352A27);
@@ -920,10 +1074,10 @@ mod island {
                             0x008E7068,
                         );
                     }
-                    text(dc, 35, 137, 17, 400, &label, WHITE, 345);
+                    text(dc, 35, 137, 17, 400, &label, white(), 345);
                     if s.edit_focus && ((s.clock.elapsed().as_millis() / 500) % 2 == 0) {
                         let cx = 35 + (s.caret as i32 * 8).min(339);
-                        panel(dc, cx, 138, 1, 22, 0, ACCENT);
+                        panel(dc, cx, 138, 1, 22, 0, accent());
                     }
                     text(
                         dc,
@@ -940,7 +1094,7 @@ mod island {
                                 .unwrap_or("Unavailable")
                                 .to_uppercase()
                         ),
-                        WHITE,
+                        white(),
                         365,
                     );
                     quota(
@@ -948,7 +1102,11 @@ mod island {
                         25,
                         229,
                         165,
-                        "5h",
+                        if s.settings.provider == 1 {
+                            "Session"
+                        } else {
+                            "5h"
+                        },
                         a.usage.as_ref().and_then(|u| u.session.as_ref()),
                     );
                     quota(
@@ -956,7 +1114,11 @@ mod island {
                         216,
                         229,
                         176,
-                        "7d",
+                        if s.settings.provider == 1 {
+                            "Extended"
+                        } else {
+                            "7d"
+                        },
                         a.usage.as_ref().and_then(|u| u.weekly.as_ref()),
                     );
                     text(
@@ -968,9 +1130,13 @@ mod island {
                         if s.preview {
                             "Preview · sample values"
                         } else {
-                            "Updates automatically from your Claude session."
+                            if s.settings.provider == 1 {
+                                "Updates through Codex app-server using file credentials."
+                            } else {
+                                "Updates automatically from your Claude session."
+                            }
                         },
-                        MUTED,
+                        muted(),
                         365,
                     );
                     if let Some(error) = s.usage_errors.get(*i).filter(|e| !e.is_empty()) {
@@ -1006,7 +1172,7 @@ mod island {
                 }
             }
             View::Preferences => {
-                text(dc, 24, 78, 24, 600, "Make it yours.", WHITE, 370);
+                text(dc, 24, 78, 24, 600, "Make it yours.", white(), 370);
                 text(
                     dc,
                     25,
@@ -1014,53 +1180,53 @@ mod island {
                     12,
                     400,
                     "Independent sizes · saved on this device",
-                    MUTED,
+                    muted(),
                     370,
                 );
-                text(dc, 26, 137, 13, 600, "Menu size", WHITE, 210);
-                button(dc, s, Action::Smaller, 264, 126, 38, 36, "−", false);
+                text(dc, 26, 181, 13, 600, "Menu size", white(), 210);
+                button(dc, s, Action::Smaller, 264, 170, 38, 36, "−", false);
                 text(
                     dc,
                     308,
-                    137,
+                    181,
                     12,
                     600,
                     &format!("{}%", (s.settings.menu_scale * 100.).round() as i32),
-                    WHITE,
+                    white(),
                     44,
                 );
-                button(dc, s, Action::Larger, 352, 126, 38, 36, "+", false);
-                text(dc, 26, 189, 13, 600, "Floating island size", WHITE, 220);
-                button(dc, s, Action::FloatSmaller, 264, 178, 38, 36, "−", false);
+                button(dc, s, Action::Larger, 352, 170, 38, 36, "+", false);
+                text(dc, 26, 233, 13, 600, "Floating island size", white(), 220);
+                button(dc, s, Action::FloatSmaller, 264, 222, 38, 36, "−", false);
                 text(
                     dc,
                     308,
-                    189,
+                    233,
                     12,
                     600,
                     &format!("{}%", (s.settings.float_scale * 100.).round() as i32),
-                    WHITE,
+                    white(),
                     44,
                 );
-                button(dc, s, Action::FloatLarger, 352, 178, 38, 36, "+", false);
-                text(dc, 26, 241, 13, 600, "Hover bubble size", WHITE, 220);
-                button(dc, s, Action::BubbleSmaller, 264, 230, 38, 36, "−", false);
+                button(dc, s, Action::FloatLarger, 352, 222, 38, 36, "+", false);
+                text(dc, 26, 285, 13, 600, "Hover bubble size", white(), 220);
+                button(dc, s, Action::BubbleSmaller, 264, 274, 38, 36, "−", false);
                 text(
                     dc,
                     308,
-                    241,
+                    285,
                     12,
                     600,
                     &format!("{}%", (s.settings.bubble_scale * 100.).round() as i32),
-                    WHITE,
+                    white(),
                     44,
                 );
-                button(dc, s, Action::BubbleLarger, 352, 230, 38, 36, "+", false);
+                button(dc, s, Action::BubbleLarger, 352, 274, 38, 36, "+", false);
                 toggle(
                     dc,
                     s,
                     Action::Circle,
-                    280,
+                    324,
                     "Circle with usage ring",
                     s.settings.circle,
                 );
@@ -1068,7 +1234,7 @@ mod island {
                     dc,
                     s,
                     Action::Motion,
-                    334,
+                    378,
                     "Reduce motion",
                     s.settings.reduced_motion,
                 );
@@ -1077,30 +1243,44 @@ mod island {
                     s,
                     Action::Rollback,
                     24,
-                    390,
+                    434,
                     372,
                     30,
                     "Restore previous sign-in",
                     false,
                 );
-                button(
-                    dc,
-                    s,
-                    Action::Recover,
-                    24,
-                    428,
-                    372,
-                    30,
-                    "Recover local backup to folder",
-                    false,
-                );
-                button(dc, s, Action::Back, 24, 466, 170, 34, "Back", false);
+                if s.settings.provider == 0 {
+                    button(
+                        dc,
+                        s,
+                        Action::Recover,
+                        24,
+                        472,
+                        372,
+                        30,
+                        "Recover local backup to folder",
+                        false,
+                    );
+                } else {
+                    text(
+                        dc,
+                        24,
+                        480,
+                        11,
+                        400,
+                        "Codex project files are not moved or restored.",
+                        muted(),
+                        372,
+                    );
+                }
+
+                button(dc, s, Action::Back, 24, 510, 170, 34, "Back", false);
                 button(
                     dc,
                     s,
                     Action::Quit,
                     206,
-                    466,
+                    510,
                     190,
                     34,
                     "Quit Muisland",
@@ -1108,8 +1288,8 @@ mod island {
                 );
             }
             View::Remove(_, name) => {
-                text(dc, 24, 89, 24, 600, "Remove this account?", WHITE, 372);
-                paragraph(dc,25,142,&format!("Remove {name} from Muisland? Claude will stay logged in. Your chats and files are unchanged. The saved sign-in is moved to an encrypted local archive."),MUTED);
+                text(dc, 24, 89, 24, 600, "Remove this account?", white(), 372);
+                paragraph(dc,25,142,&format!("Remove {name} from Muisland? The current sign-in, chats and files remain unchanged. The saved sign-in is moved to an encrypted local archive."),muted());
                 button(dc, s, Action::Cancel, 24, 312, 120, 42, "Cancel", false);
                 button(
                     dc,
@@ -1125,13 +1305,19 @@ mod island {
             }
             View::Notice(title, body) => {
                 panel(dc, 25, 80, 34, 34, 17, 0x004A3734);
-                text(dc, 37, 84, 20, 600, "i", ACCENT, 20);
-                text(dc, 24, 132, 23, 600, title, WHITE, 372);
-                paragraph(dc, 25, 180, body, if s.error { 0x009BA7F0 } else { MUTED });
+                text(dc, 37, 84, 20, 600, "i", accent(), 20);
+                text(dc, 24, 132, 23, 600, title, white(), 372);
+                paragraph(
+                    dc,
+                    25,
+                    180,
+                    body,
+                    if s.error { 0x009BA7F0 } else { muted() },
+                );
                 button(dc, s, Action::Back, 24, 410, 372, 42, "Got it", true)
             }
             View::SwitchConfirm(index) => {
-                text(dc, 24, 89, 24, 600, "Switch account?", WHITE, 372);
+                text(dc, 24, 89, 24, 600, "Switch account?", white(), 372);
                 text(
                     dc,
                     25,
@@ -1139,10 +1325,20 @@ mod island {
                     16,
                     600,
                     &s.settings.accounts[*index].name,
-                    ACCENT,
+                    accent(),
                     365,
                 );
-                paragraph(dc,25,180,"Confirm to open this saved account. If Claude is running, it will close first. Local tasks may stop and unsaved work may be lost.",MUTED);
+                paragraph(
+                    dc,
+                    25,
+                    180,
+                    if s.settings.provider == 1 {
+                        "Switch the Codex file sign-in? New CLI sessions use this account. Restart open sessions to reload. The Desktop host may keep its own login."
+                    } else {
+                        "Confirm to open this saved account. If Claude is running, it will close first. Local tasks may stop and unsaved work may be lost."
+                    },
+                    muted(),
+                );
                 button(dc, s, Action::Cancel, 24, 312, 120, 42, "Cancel", false);
                 button(
                     dc,
@@ -1169,10 +1365,20 @@ mod island {
                     } else {
                         "Close Claude & switch?"
                     },
-                    WHITE,
+                    white(),
                     372,
                 );
-                paragraph(dc,25,142,"Claude Desktop will close. Local tasks may stop and unsaved work may be lost. Nothing closes until you confirm.",MUTED);
+                paragraph(
+                    dc,
+                    25,
+                    142,
+                    if s.settings.provider == 1 {
+                        "Switch the Codex sign-in cache? New Codex CLI sessions use this account. Restart existing sessions to reload it; the Desktop app may retain its own host login."
+                    } else {
+                        "Claude Desktop will close. Local tasks may stop and unsaved work may be lost. Nothing closes until you confirm."
+                    },
+                    muted(),
+                );
                 if let Op::Save(i) | Op::Switch(i) = op {
                     text(
                         dc,
@@ -1181,7 +1387,7 @@ mod island {
                         12,
                         600,
                         &format!("Account: {}", s.settings.accounts[*i].name),
-                        WHITE,
+                        white(),
                         365,
                     );
                 }
@@ -1235,7 +1441,7 @@ mod island {
             }
         }
         unsafe fn clear(&self) {
-            let brush = CreateSolidBrush(BG);
+            let brush = CreateSolidBrush(bg());
             FillRect(
                 self.dc,
                 &RECT {
@@ -1259,6 +1465,7 @@ mod island {
         }
     }
     unsafe fn render_surface(s: &State) -> Option<Surface> {
+        ACTIVE_THEME.with(|v| v.set(s.settings.theme));
         let lw = s.w.round().max(1.) as i32;
         let lh = s.h.round().max(1.) as i32;
         let source = Surface::new(lw * 2, lh * 2);
@@ -1275,11 +1482,19 @@ mod island {
                 .and_then(|u| u.session.as_ref().or(u.weekly.as_ref()))
                 .map(|w| w.used);
             ring(source.dc, cx, cy, 27., used);
-            mark(source.dc, cx as i32 - 9, cy as i32 - 9, 18, WHITE);
+            mark(source.dc, cx as i32 - 9, cy as i32 - 9, 18, white());
         } else {
-            panel(source.dc, 16, 14, 30, 30, 15, 0x00473732);
-            mark(source.dc, 24, 22, 14, ACCENT);
-            text(source.dc, 57, 17, 18, 600, "Muisland", WHITE, 170);
+            panel(
+                source.dc,
+                16,
+                14,
+                30,
+                30,
+                15,
+                mix(panel_color(), accent(), 0.18),
+            );
+            mark(source.dc, 24, 22, 14, accent());
+            text(source.dc, 57, 17, 18, 600, "Muisland", white(), 170);
             let w = lw;
             button(
                 source.dc,
@@ -1301,14 +1516,38 @@ mod island {
                     32,
                     34,
                     12,
-                    mix(PANEL, 0x004B3938, hot(s, Action::Preferences) * 0.8),
+                    mix(panel_color(), 0x004B3938, hot(s, Action::Preferences) * 0.8),
                 );
                 gear(
                     source.dc,
                     (w - 72) as f32,
                     29.,
                     rotation * std::f32::consts::FRAC_PI_4,
-                    mix(MUTED, ACCENT, rotation.max(hot(s, Action::Preferences))),
+                    mix(muted(), accent(), rotation.max(hot(s, Action::Preferences))),
+                );
+            }
+            if s.open && lh > 100 {
+                button(
+                    source.dc,
+                    s,
+                    Action::ClaudeTab,
+                    24,
+                    64,
+                    182,
+                    32,
+                    "Claude",
+                    s.settings.provider == 0,
+                );
+                button(
+                    source.dc,
+                    s,
+                    Action::CodexTab,
+                    214,
+                    64,
+                    182,
+                    32,
+                    "Codex",
+                    s.settings.provider == 1,
                 );
             }
             if s.reveal > 0.01 && lh > 70 {
@@ -1319,8 +1558,8 @@ mod island {
                     options_motion(s.previous.as_ref(), &s.view, s.transition);
                 if let Some(previous) = &s.previous {
                     let saved = SaveDC(source.dc);
-                    IntersectClipRect(source.dc, 0, 58 * 2, lw * 2, lh * 2);
-                    SetViewportOrgEx(source.dc, outgoing * 2, 0, null_mut());
+                    IntersectClipRect(source.dc, 0, (58 + BODY_OFFSET) * 2, lw * 2, lh * 2);
+                    SetViewportOrgEx(source.dc, outgoing * 2, BODY_OFFSET * 2, null_mut());
                     draw_view(source.dc, s, previous);
                     RestoreDC(source.dc, saved);
                 }
@@ -1328,7 +1567,7 @@ mod island {
                 SetViewportOrgEx(
                     layer.dc,
                     incoming * 2,
-                    ((1. - s.reveal) * 12.) as i32 * 2,
+                    BODY_OFFSET * 2 + ((1. - s.reveal) * 12.) as i32 * 2,
                     null_mut(),
                 );
                 draw_view(layer.dc, s, &s.view);
@@ -1342,14 +1581,14 @@ mod island {
                 AlphaBlend(
                     source.dc,
                     0,
-                    58 * 2,
+                    (58 + BODY_OFFSET) * 2,
                     lw * 2,
-                    (lh - 58) * 2,
+                    (lh - 58 - BODY_OFFSET) * 2,
                     layer.dc,
                     0,
-                    58 * 2,
+                    (58 + BODY_OFFSET) * 2,
                     lw * 2,
-                    (lh - 58) * 2,
+                    (lh - 58 - BODY_OFFSET) * 2,
                     BLENDFUNCTION {
                         BlendOp: AC_SRC_OVER as u8,
                         BlendFlags: 0,
@@ -1357,6 +1596,21 @@ mod island {
                         AlphaFormat: 0,
                     },
                 );
+                if matches!(s.view, View::Preferences) && s.transition > 0.9 {
+                    for theme in 0..4 {
+                        button(
+                            source.dc,
+                            s,
+                            Action::Theme(theme),
+                            24 + theme as i32 * 95,
+                            128 + BODY_OFFSET,
+                            87,
+                            34,
+                            theme_name(theme),
+                            s.settings.theme == theme,
+                        );
+                    }
+                }
                 if lh > 500 {
                     let status = if !s.status.is_empty() {
                         s.status.as_str()
@@ -1368,17 +1622,21 @@ mod island {
                         if !s.preview && !s.network_allowed {
                             "Usage paused in this test session"
                         } else {
-                            "Live usage · 30s active / 2m other accounts"
+                            if s.settings.provider == 1 {
+                                "Codex · shared file login · 30s usage polling"
+                            } else {
+                                "Claude · 30s active / 2m other accounts"
+                            }
                         }
                     };
                     text(
                         source.dc,
                         25,
-                        506,
+                        EH as i32 - 30,
                         11,
                         400,
                         status,
-                        if s.error { 0x009BA7F0 } else { MUTED },
+                        if s.error { 0x009BA7F0 } else { muted() },
                         370,
                     );
                 }
@@ -1500,11 +1758,12 @@ mod island {
         })
     }
     unsafe fn render_bubble(s: &State, scale: f32, right: bool, tail: f32) -> Option<Surface> {
+        ACTIVE_THEME.with(|v| v.set(s.settings.theme));
         let source = Surface::new(BUBBLE_W as i32 * 2, BUBBLE_H as i32 * 2);
         if source.bits.is_null() {
             return None;
         }
-        let brush = CreateSolidBrush(PANEL);
+        let brush = CreateSolidBrush(panel_color());
         FillRect(
             source.dc,
             &RECT {
@@ -1528,7 +1787,7 @@ mod island {
             account
                 .map(|a| a.name.as_str())
                 .unwrap_or("No linked account"),
-            WHITE,
+            white(),
             252,
         );
         let caption = u
@@ -1544,7 +1803,7 @@ mod island {
                 )
             })
             .unwrap_or_else(|| "Usage not available yet".into());
-        text(source.dc, inset + 20, 43, 10, 400, &caption, MUTED, 252);
+        text(source.dc, inset + 20, 43, 10, 400, &caption, muted(), 252);
         line(
             source.dc,
             &[(inset + 20, 65), (inset + 276, 65)],
@@ -1556,7 +1815,11 @@ mod island {
             inset + 20,
             77,
             256,
-            "5h",
+            if s.settings.provider == 1 {
+                "Session"
+            } else {
+                "5h"
+            },
             u.and_then(|u| u.session.as_ref()),
         );
         quota(
@@ -1564,7 +1827,11 @@ mod island {
             inset + 20,
             131,
             256,
-            "7d",
+            if s.settings.provider == 1 {
+                "Extended"
+            } else {
+                "7d"
+            },
             u.and_then(|u| u.weekly.as_ref()),
         );
         compose(&source, BUBBLE_W, BUBBLE_H, scale, |x, y| {
@@ -1844,7 +2111,11 @@ mod island {
                 } else if s.preview {
                     true
                 } else {
-                    profiles::saved(s.settings.accounts[i].slot)
+                    if s.settings.provider == 1 {
+                        codex::saved(s.settings.accounts[i].slot)
+                    } else {
+                        profiles::saved(s.settings.accounts[i].slot)
+                    }
                 }
             })
             .collect();
@@ -1855,7 +2126,11 @@ mod island {
                 } else if s.preview {
                     Some(format!("preview-{}", s.settings.accounts[i].slot))
                 } else {
-                    profiles::account_identity(s.settings.accounts[i].slot).ok()
+                    if s.settings.provider == 1 {
+                        codex::account_identity(s.settings.accounts[i].slot).ok()
+                    } else {
+                        profiles::account_identity(s.settings.accounts[i].slot).ok()
+                    }
                 }
             })
             .collect();
@@ -1869,6 +2144,7 @@ mod island {
         let now = s.clock.elapsed().as_secs_f32();
         s.sync_next = now + polling::IDENTITY_SECONDS;
         let network_allowed = s.network_allowed;
+        let provider = s.settings.provider;
         let polls = s.polls.clone();
         let slots = s
             .identities
@@ -1884,7 +2160,11 @@ mod island {
             let current = if preview {
                 Some("preview-1".into())
             } else {
-                usage::current_account_identity().ok()
+                if provider == 1 {
+                    codex::current_identity().ok()
+                } else {
+                    usage::current_account_identity().ok()
+                }
             };
             let active = current.as_ref().and_then(|id| {
                 slots
@@ -1905,7 +2185,12 @@ mod island {
                             samples.push((
                                 slot,
                                 id,
-                                usage::fetch(slot).map_err(usage::Failure::from),
+                                (if provider == 1 {
+                                    codex::fetch(slot)
+                                } else {
+                                    usage::fetch(slot)
+                                })
+                                .map_err(usage::Failure::from),
                             ));
                         }
                     }
@@ -1928,6 +2213,7 @@ mod island {
         let preview = s.preview;
         let active = s.active;
         let protect = s.settings.protect_local;
+        let provider = s.settings.provider;
         let slot = match op {
             Op::Save(i) | Op::Switch(i) => s.settings.accounts[i].slot,
             _ => 0,
@@ -1948,7 +2234,12 @@ mod island {
             let result = (|| -> Result<Outcome, String> {
                 if let Op::Switch(i) = op {
                     if (preview && active == Some(i))
-                        || (!preview && profiles::is_current(slot).unwrap_or(false))
+                        || (!preview
+                            && if provider == 1 {
+                                codex::is_current(slot)
+                            } else {
+                                profiles::is_current(slot).unwrap_or(false)
+                            })
                     {
                         return Ok(Outcome::Already(i));
                     }
@@ -1956,7 +2247,8 @@ mod island {
                         return Ok(Outcome::NeedsSwitch(i));
                     }
                 }
-                if matches!(op, Op::Save(_) | Op::Switch(_))
+                if provider == 0
+                    && matches!(op, Op::Save(_) | Op::Switch(_))
                     && !confirmed
                     && (preview || profiles::claude_running())
                 {
@@ -1966,6 +2258,21 @@ mod island {
                     return Ok(Outcome::Done(
                         op,
                         "Preview complete · no account changes".into(),
+                    ));
+                }
+                if provider == 1 {
+                    match op {
+                        Op::Save(_)=>codex::save(slot),Op::Switch(_)=>codex::switch(slot),Op::Rollback=>codex::rollback(),
+                        Op::Recover=>Err(std::io::Error::other("Codex switches only its sign-in cache. Chats and working folders are not moved or restored."))
+                    }.map_err(|e|e.to_string())?;
+                    return Ok(Outcome::Done(
+                        op,
+                        if matches!(op, Op::Switch(_)) {
+                            "Codex sign-in switched · restart existing Codex sessions to reload"
+                        } else {
+                            "Codex sign-in saved"
+                        }
+                        .into(),
                     ));
                 }
                 let launch = profiles::claude_launch_target();
@@ -2050,7 +2357,11 @@ mod island {
         let archive = if s.preview || s.settings.accounts[index].draft {
             None
         } else {
-            match profiles::archive_account(slot) {
+            match if s.settings.provider == 1 {
+                codex::archive(slot)
+            } else {
+                profiles::archive_account(slot)
+            } {
                 Ok(path) => path,
                 Err(e) => {
                     notice(s, "Could not remove account", e.to_string(), true);
@@ -2062,7 +2373,11 @@ mod island {
         if !s.preview && s.settings.save().is_err() {
             s.settings = old;
             if let Some(path) = archive {
-                let _ = profiles::restore_archived_account(slot, &path);
+                let _ = if s.settings.provider == 1 {
+                    codex::restore_archive(slot, &path)
+                } else {
+                    profiles::restore_archived_account(slot, &path)
+                };
             }
             notice(
                 s,
@@ -2101,6 +2416,36 @@ mod island {
     unsafe fn activate(hwnd: HWND, s: &mut State, a: Action) {
         match a {
             Action::None => {}
+            Action::ClaudeTab | Action::CodexTab => {
+                if s.worker.is_some() {
+                    status(
+                        s,
+                        "Wait for the current operation before changing apps",
+                        false,
+                    );
+                } else {
+                    discard_drafts(s);
+                    let provider = if a == Action::CodexTab { 1 } else { 0 };
+                    s.settings.select_provider(provider);
+                    s.generation += 1;
+                    s.sync = None;
+                    s.sync_next = 0.;
+                    s.polls.clear();
+                    s.active = None;
+                    s.page = 0;
+                    refresh_slots(s);
+                    persist(s);
+                    navigate(s, View::Home, false);
+                    // A prior confirmation may refer to another provider's slot.
+                    s.previous = None;
+                    s.hover_levels.clear();
+                }
+            }
+            Action::Theme(index) => {
+                s.settings.theme = index.min(3);
+                persist(s);
+            }
+
             Action::Toggle => {
                 if s.open {
                     collapse(s)
@@ -2487,9 +2832,11 @@ mod island {
                 if s.hover_t > 0.998 {
                     s.hover_t = 1.;
                 }
+                let hover_changed = animate_hover(s, dt);
                 constrain(s);
-                let mut changed =
-                    old_page_fade != s.page_fade || before_position != (s.anchor, s.top);
+                let mut changed = hover_changed
+                    || old_page_fade != s.page_fade
+                    || before_position != (s.anchor, s.top);
                 if let Some(result) = s.sync.as_ref().and_then(|r| r.try_recv().ok()) {
                     s.sync = None;
                     if result.generation == s.generation {
@@ -2537,7 +2884,20 @@ mod island {
                         Ok(Outcome::Already(i)) => {
                             s.active = Some(i);
                             let visible = s.open;
-                            notice(s,"Already logged in",format!("{} is the account currently logged into Claude. No switch was needed and Claude was left untouched.",s.settings.accounts[i].name),false);
+                            notice(
+                                s,
+                                "Already logged in",
+                                format!(
+                                    "{} is already logged into {}. No sign-in was changed.",
+                                    s.settings.accounts[i].name,
+                                    if s.settings.provider == 1 {
+                                        "Codex"
+                                    } else {
+                                        "Claude"
+                                    }
+                                ),
+                                false,
+                            );
                             if !visible {
                                 s.open = false;
                                 s.previous = None;
@@ -2778,6 +3138,7 @@ mod island {
         if preview {
             settings.accounts[0].name = "Personal".into();
             settings.accounts[1].name = "Work".into();
+            settings.other_accounts = settings.accounts.clone();
             for i in 0..2 {
                 settings.accounts[i].usage = Some(Usage {
                     session: Some(Window {
@@ -2791,6 +3152,17 @@ mod island {
                     updated: accounts::now(),
                     plan: "Demo".into(),
                 });
+            }
+        }
+        if preview {
+            settings.other_accounts = settings.accounts.clone();
+            for (i, a) in settings.other_accounts.iter_mut().enumerate() {
+                a.name = if i == 0 {
+                    "Codex Personal"
+                } else {
+                    "Development"
+                }
+                .into();
             }
         }
         let circle = settings.circle;
@@ -2826,6 +3198,7 @@ mod island {
             reveal: 0.,
             hover: Action::None,
             hover_t: 0.,
+            hover_levels: std::collections::HashMap::new(),
             focus: Action::None,
             down: None,
             drag: false,
@@ -3116,6 +3489,31 @@ mod island {
             assert_eq!(s.settings.accounts.len(), 2);
         }
         #[test]
+        fn provider_tabs_and_theme_choices_have_separate_hit_regions() {
+            let mut s = initial(true, 0., 0);
+            s.reveal = 1.;
+            s.transition = 1.;
+            assert_eq!(hit(&s, 110, 80), Action::ClaudeTab);
+            assert_eq!(hit(&s, 300, 80), Action::CodexTab);
+            s.view = View::Preferences;
+            assert_eq!(hit(&s, 160, 189), Action::Theme(1));
+            s.settings.select_provider(1);
+            s.view = View::Home;
+            assert!(!buttons(&s).iter().any(|b| b.action == Action::Protect));
+        }
+        #[test]
+        fn button_hover_eases_in_and_out_instead_of_snapping() {
+            let mut s = initial(true, 0., 0);
+            s.hover = Action::Preferences;
+            assert!(animate_hover(&mut s, 0.016));
+            let entered = hot(&s, Action::Preferences);
+            assert!(entered > 0. && entered < 1.);
+            s.hover = Action::None;
+            assert!(animate_hover(&mut s, 0.016));
+            let leaving = hot(&s, Action::Preferences);
+            assert!(leaving > 0. && leaving < entered);
+        }
+        #[test]
         fn account_hit_targets_are_not_limited_to_two() {
             let mut s = initial(true, 0., 0);
             for _ in 0..4 {
@@ -3126,9 +3524,9 @@ mod island {
             s.open = true;
             s.transition = 1.;
             s.reveal = 1.;
-            assert_eq!(hit(&s, 80, 150), Action::Switch(4));
-            assert_eq!(hit(&s, 350, 150), Action::Save(4));
-            assert_eq!(hit(&s, 307, 274), Action::Details(5));
+            assert_eq!(hit(&s, 80, 194), Action::Switch(4));
+            assert_eq!(hit(&s, 350, 194), Action::Save(4));
+            assert_eq!(hit(&s, 307, 318), Action::Details(5));
         }
         #[test]
         fn rounded_window_uses_transparent_antialiased_edges_without_a_stroke() {
@@ -3183,9 +3581,9 @@ mod island {
             s.view = View::Preferences;
             s.reveal = 1.;
             s.transition = 1.;
-            assert_eq!(hit(&s, 371, 144), Action::Larger);
-            assert_eq!(hit(&s, 371, 196), Action::FloatLarger);
-            assert_eq!(hit(&s, 371, 248), Action::BubbleLarger);
+            assert_eq!(hit(&s, 371, 232), Action::Larger);
+            assert_eq!(hit(&s, 371, 284), Action::FloatLarger);
+            assert_eq!(hit(&s, 371, 336), Action::BubbleLarger);
             s.settings.menu_scale = 1.4;
             s.settings.float_scale = 0.6;
             assert_eq!(s.settings.bubble_scale, 1.0);
@@ -3348,6 +3746,16 @@ mod island {
 }
 #[cfg(windows)]
 fn main() {
+    if std::env::args().any(|a| a == "--check-codex-usage") {
+        match codex::fetch_current() {
+            Ok(u) => println!("{}", u.to_cache()),
+            Err(e) => {
+                eprintln!("Codex usage: {e}");
+                std::process::exit(1)
+            }
+        }
+        return;
+    }
     if std::env::args().any(|a| a == "--check-usage") {
         match usage::fetch_current() {
             Ok(u) => println!("{}", u.to_cache()),

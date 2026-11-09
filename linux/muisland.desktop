@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Muisland
+Comment=Claude and Codex accounts and usage
+Exec=muisland
+Icon=preferences-system
+Terminal=false
+Categories=Utility;
+StartupWMClass=Muisland

@@ -616,6 +616,57 @@
           transform: translateX(0);
         }
       }
+      .provider-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin: 16px 0 0;
+      }
+      .provider-tabs button {
+        font-size: 12px;
+        padding: 9px;
+      }
+      .provider-tabs .active {
+        background: var(--green);
+        color: #191720;
+      }
+      .theme-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px;
+        margin: 14px 0;
+      }
+      .theme-grid button {
+        font-size: 11px;
+        padding: 9px;
+        text-align: left;
+      }
+      .theme-grid .selected {
+        box-shadow: inset 0 0 0 1px var(--green);
+      }
+      .theme-dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+      body {
+        background: var(--site-bg, #14121d);
+      }
+      .menu,
+      .circle {
+        background: var(--surface, #100d19);
+      }
+      .bubble,
+      .bubble:before,
+      .account {
+        background: var(--surface-panel, #241d32);
+      }
+      button:hover {
+        transform: translateY(-1px);
+        filter: brightness(1.08);
+      }
     </style>
   </head>
   <body>
@@ -681,6 +732,10 @@
               ><button id="settings" aria-label="Preferences">⚙</button
               ><button id="close" aria-label="Collapse menu">−</button>
             </div>
+            <nav id="providers" class="provider-tabs" aria-label="App provider">
+              <button data-provider="claude">Claude</button
+              ><button data-provider="codex">Codex</button>
+            </nav>
             <div id="body" class="body"></div>
           </section>
           <div id="toast" class="toast" role="status"></div>
@@ -718,6 +773,12 @@
         menu = $("menu"),
         body = $("body");
       const defaults = () => ({
+        provider: "claude",
+        theme: 0,
+        otherAccounts: [
+          { name: "Codex Personal", used: 34, week: 51 },
+          { name: "Development", used: 61, week: 69 },
+        ],
         accounts: [
           { name: "Personal", used: 28, week: 46 },
           { name: "Work", used: 82, week: 61 },
@@ -866,7 +927,51 @@
         hideTimer = setTimeout(() => bubble.classList.remove("shown"), 260);
       }
       let renderedView = "accounts";
+      const themes = [
+        {
+          name: "Lavender",
+          accent: "#c3b2ff",
+          bg: "#14121d",
+          surface: "#100d19",
+          panel: "#241d32",
+        },
+        {
+          name: "Ocean",
+          accent: "#7fc6ff",
+          bg: "#0d121a",
+          surface: "#0d121a",
+          panel: "#17212d",
+        },
+        {
+          name: "Sunset",
+          accent: "#ffb396",
+          bg: "#1b1314",
+          surface: "#1b1314",
+          panel: "#301f22",
+        },
+        {
+          name: "Graphite",
+          accent: "#e1e3ea",
+          bg: "#161616",
+          surface: "#161616",
+          panel: "#272727",
+        },
+      ];
       function render() {
+        const theme = themes[state.theme];
+        for (const [key, value] of [
+          ["green", theme.accent],
+          ["site-bg", theme.bg],
+          ["surface", theme.surface],
+          ["surface-panel", theme.panel],
+        ])
+          document.documentElement.style.setProperty("--" + key, value);
+        document
+          .querySelectorAll("[data-provider]")
+          .forEach((b) =>
+            b.classList.toggle("active", b.dataset.provider === state.provider),
+          );
+
         body.classList.remove("options-in", "options-out");
         if (
           (state.view === "preferences") !==
@@ -893,7 +998,7 @@
             `<div class="account-actions"><div><button class="tiny quiet" data-page="-1" aria-label="Previous accounts">‹</button><small>${state.page + 1} / ${Math.ceil(state.accounts.length / 2)}</small><button class="tiny quiet" data-page="1" aria-label="Next accounts">›</button></div><button class="tiny" data-add>+ Add account</button></div><div class="foot">Interactive sample · No real account operations</div>`;
         } else if (state.view === "preferences") {
           body.innerHTML =
-            `<h2>Make it yours.</h2><p class="subtitle">Three independent sizes. Try each one.</p>` +
+            `<h2>Make it yours.</h2><p class="subtitle">Themes and three independent sizes.</p><div class="theme-grid">${themes.map((t, i) => `<button data-theme="${i}" class="${state.theme === i ? "selected" : ""}"><span class="theme-dot" style="background:${t.accent}"></span>${t.name}</button>`).join("")}</div>` +
             [
               ["menu", "Menu size", 0.75, 1.6],
               ["float", "Floating circle size", 0.6, 1.8],
@@ -907,7 +1012,7 @@
             `<label class="row">Reduce motion<input id="reduce" type="checkbox" ${state.reduce ? "checked" : ""}></label><div class="sample">Shrink the floating circle, then hover it.<br>The bubble stays at its own size.</div><div class="action-row"><button data-back>Back</button><button class="primary" data-collapse>Try the circle</button></div>`;
         } else if (state.view === "confirm") {
           const a = state.accounts[state.pending];
-          body.innerHTML = `<h2>Switch account?</h2><p class="confirm-copy">Switch to <strong>${escapeHTML(a.name)}</strong>?<br>In the native app, confirming may close and reopen Claude. Here, only the sample active account changes.</p><div class="action-row"><button data-back>Cancel</button><button class="primary" data-confirm>Confirm switch</button></div>`;
+          body.innerHTML = `<h2>Switch account?</h2><p class="confirm-copy">Switch to <strong>${escapeHTML(a.name)}</strong>?<br>${state.provider === "codex" ? "The native app switches the Codex file sign-in cache. Existing sessions need a restart." : "In the native app, confirming may close and reopen Claude."} Here, only the sample active account changes.</p><div class="action-row"><button data-back>Cancel</button><button class="primary" data-confirm>Confirm switch</button></div>`;
         } else if (state.view === "edit") {
           const a = state.accounts[state.pending];
           body.innerHTML = `<h2>Name your account.</h2><p class="subtitle">Only this browser demo changes.</p><input id="name" class="rename" maxlength="48" aria-label="Account name" value="${escapeHTML(a.name)}"><div class="action-row"><button data-back>Cancel</button><button class="primary" data-rename>Save name</button></div><button class="quiet" data-remove>Remove sample account</button>`;
@@ -918,6 +1023,11 @@
       body.addEventListener("click", (e) => {
         const b = e.target.closest("button");
         if (!b) return;
+        if (b.hasAttribute("data-theme")) {
+          state.theme = +b.dataset.theme;
+          render();
+          return;
+        }
         if (b.hasAttribute("data-switch")) {
           const i = +b.dataset.switch;
           if (i === state.active)
@@ -1051,6 +1161,19 @@
           e.preventDefault();
           open();
         }
+      });
+      $("providers").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-provider]");
+        if (!b || b.dataset.provider === state.provider) return;
+        const old = state.accounts;
+        state.accounts = state.otherAccounts;
+        state.otherAccounts = old;
+        state.provider = b.dataset.provider;
+        state.active = 0;
+        state.page = 0;
+        state.view = "accounts";
+        $("usage").value = state.accounts[0].used;
+        render();
       });
       $("header").addEventListener("click", (e) => {
         if (e.target.closest("#settings")) {
