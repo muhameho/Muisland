@@ -47,9 +47,11 @@ The expanded menu, floating island, and hover bubble each have their own size co
 
 ## Interactive demo
 
-**[Download the standalone playground](docs/demo/index.html?raw=1)** · [View its source](docs/demo/index.html)
+**[Download the standalone playground](demo/index.html?raw=1)** · [View its source](demo/index.html)
 
-Save the HTML file and open it in a browser. It is self-contained: no build step, backend, external fonts, or Claude connection. If GitHub opens the source view, choose **Download raw file** and open the saved file.
+The demo lives in `demo/`, separately from documentation. A direct online link can be added after Pages publication is enabled.
+
+Use the live link when available, or save the HTML file and open it in a browser. It is self-contained: no build step, backend, external fonts, or Claude connection. If GitHub opens the source view, choose **Download raw file** and open the saved file.
 
 Try these interactions:
 
@@ -110,6 +112,8 @@ The output is `target\release\muisland.exe`. Build outputs are excluded from Git
 2. Choose **Save** on the intended slot in Muisland. Use **+ Add account** for another slot.
 3. If Claude is running, review **Close & save**. Muisland requests a normal exit, waits for Claude to stop, captures the sign-in, and reopens Claude.
 4. Click a saved account and choose **Confirm switch** to switch to it.
+
+**+ Add account** creates a temporary draft. Enter a name and choose **Save account** to capture the Claude sign-in. The new entry becomes permanent only after capture succeeds. Back, Cancel, Escape, or closing the island discards an unfinished draft; saving unrelated preferences cannot accidentally keep it. A confirmed save already running is allowed to finish safely.
 
 Use an account card's **(...)** menu to rename or remove it. Removing an account archives its encrypted snapshot locally; it does not sign Claude out or delete cloud chats.
 
@@ -266,7 +270,7 @@ gitleaks git . --redact
 | `src/usage.rs` | Account-bound usage requests and quota parsing |
 | `src/polling.rs` | Refresh timing, retries, and backoff |
 | `src/backup.rs` | Encrypted local checkpoints and separate-folder recovery |
-| `docs/demo/index.html` | Standalone browser playground with sample data |
+| `demo/index.html` | Standalone browser playground with sample data |
 | `docs/images` | Curated README images and motion preview |
 | `scripts/render-docs.py` | Rebuilds gallery assets from offline app renders |
 

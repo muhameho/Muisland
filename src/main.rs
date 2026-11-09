@@ -922,7 +922,11 @@ mod island {
                         356,
                         372,
                         36,
-                        "Remove account",
+                        if a.draft {
+                            "Discard draft"
+                        } else {
+                            "Remove account"
+                        },
                         false,
                     );
                     button(dc, s, Action::Back, 24, 410, 120, 42, "Back", false);
@@ -934,7 +938,7 @@ mod island {
                         410,
                         240,
                         42,
-                        "Save name",
+                        if a.draft { "Save account" } else { "Save name" },
                         true,
                     );
                 }
@@ -1702,8 +1706,35 @@ mod island {
             }
         }
     }
+    fn discard_drafts(s: &mut State) {
+        // Worker outcomes carry account indices. Keep them stable until completion.
+        if s.worker.is_some() || !s.settings.accounts.iter().any(|a| a.draft) {
+            return;
+        }
+        let active_slot = s
+            .active
+            .and_then(|i| s.settings.accounts.get(i))
+            .map(|a| a.slot);
+        s.settings.accounts.retain(|a| !a.draft);
+        s.active =
+            active_slot.and_then(|slot| s.settings.accounts.iter().position(|a| a.slot == slot));
+        s.generation += 1;
+        s.sync = None;
+        s.sync_next = 0.;
+        s.polls
+            .retain(|slot, _| s.settings.accounts.iter().any(|a| a.slot == *slot));
+        refresh_slots(s);
+        s.page = s
+            .page
+            .min(s.settings.accounts.len().div_ceil(2).saturating_sub(1));
+        s.view = View::Home;
+        s.previous = None;
+        s.edit_focus = false;
+        s.focus = Action::None;
+    }
     fn collapse(s: &mut State) {
         s.open = false;
+        discard_drafts(s);
         s.peek = false;
         s.peek_until = 0.;
         s.edit_focus = false;
@@ -1732,7 +1763,9 @@ mod island {
     fn refresh_slots(s: &mut State) {
         s.saved = (0..s.settings.accounts.len())
             .map(|i| {
-                if s.preview {
+                if s.settings.accounts[i].draft {
+                    false
+                } else if s.preview {
                     true
                 } else {
                     profiles::saved(s.settings.accounts[i].slot)
@@ -1741,7 +1774,9 @@ mod island {
             .collect();
         s.identities = (0..s.settings.accounts.len())
             .map(|i| {
-                if s.preview {
+                if s.settings.accounts[i].draft {
+                    None
+                } else if s.preview {
                     Some(format!("preview-{}", s.settings.accounts[i].slot))
                 } else {
                     profiles::account_identity(s.settings.accounts[i].slot).ok()
@@ -1898,6 +1933,12 @@ mod island {
         if let View::Details(i) = s.view {
             match accounts::valid_name(&String::from_utf16_lossy(&s.edit)) {
                 Ok(name) => {
+                    if s.settings.accounts[i].draft {
+                        s.settings.accounts[i].name = name;
+                        navigate(s, View::Home, true);
+                        begin(s, Op::Save(i), false);
+                        return;
+                    }
                     let old = s.settings.accounts[i].name.clone();
                     s.settings.accounts[i].name = name;
                     if !s.preview && s.settings.save().is_err() {
@@ -1930,7 +1971,7 @@ mod island {
             .active
             .and_then(|i| s.settings.accounts.get(i))
             .map(|a| a.slot);
-        let archive = if s.preview {
+        let archive = if s.preview || s.settings.accounts[index].draft {
             None
         } else {
             match profiles::archive_account(slot) {
@@ -1994,7 +2035,10 @@ mod island {
                 }
             }
             Action::Preferences => navigate(s, View::Preferences, false),
-            Action::Back | Action::Cancel => navigate(s, View::Home, true),
+            Action::Back | Action::Cancel => {
+                discard_drafts(s);
+                navigate(s, View::Home, true)
+            }
             Action::Details(i) => {
                 s.edit = s.settings.accounts[i].name.encode_utf16().collect();
                 s.caret = s.edit.len();
@@ -2042,16 +2086,6 @@ mod island {
             }
             Action::Add => {
                 if let Some(i) = s.settings.add_account() {
-                    if !s.preview && s.settings.save().is_err() {
-                        s.settings.accounts.pop();
-                        notice(
-                            s,
-                            "Could not add account",
-                            "Preferences could not be saved. No account slot was added.",
-                            true,
-                        );
-                        return;
-                    }
                     refresh_slots(s);
                     s.page = i / 2;
                     s.edit = s.settings.accounts[i].name.encode_utf16().collect();
@@ -2445,6 +2479,7 @@ mod island {
                         Ok(Outcome::Done(op, label)) => {
                             let visible = s.open;
                             if let Op::Save(i) = op {
+                                s.settings.accounts[i].draft = false;
                                 s.settings.accounts[i].usage = None;
                                 s.usage_errors[i].clear();
                                 persist(s);
@@ -2474,6 +2509,9 @@ mod island {
                                 s.transition = 1.;
                             }
                         }
+                    }
+                    if !s.open {
+                        discard_drafts(s);
                     }
                     changed = true;
                 }
@@ -2595,11 +2633,10 @@ mod island {
                     paste(hwnd, s);
                 } else if key == 0x1B {
                     if s.open && !matches!(s.view, View::Home) {
+                        discard_drafts(s);
                         navigate(s, View::Home, true)
                     } else {
-                        s.open = false;
-                        s.peek = false;
-                        s.edit_focus = false;
+                        collapse(s);
                     }
                 } else if s.edit_focus && key == 0x0D {
                     name_save(s)
@@ -2949,6 +2986,52 @@ mod island {
                 assert!(alpha(edge, 94) > 200);
                 assert_eq!(alpha(edge, 40), 0);
             }
+        }
+        #[test]
+        fn closing_discards_new_unsaved_accounts_and_keeps_existing_slots() {
+            let mut s = initial(true, 0., 0);
+            let i = s.settings.add_account().unwrap();
+            refresh_slots(&mut s);
+            s.page = i / 2;
+            assert!(!s.saved[i]);
+            assert!(s.identities[i].is_none());
+            collapse(&mut s);
+            assert_eq!(s.settings.accounts.len(), 2);
+            assert_eq!(s.page, 0);
+            assert_eq!(s.active, Some(0));
+            assert_eq!(
+                s.settings
+                    .accounts
+                    .iter()
+                    .map(|a| a.slot)
+                    .collect::<Vec<_>>(),
+                vec![1, 2]
+            );
+        }
+        #[test]
+        fn draft_cleanup_waits_for_inflight_save_then_preserves_success() {
+            let mut s = initial(true, 0., 0);
+            let i = s.settings.add_account().unwrap();
+            refresh_slots(&mut s);
+            let (_tx, rx) = mpsc::channel();
+            s.worker = Some(rx);
+            collapse(&mut s);
+            assert_eq!(s.settings.accounts.len(), 3);
+            s.worker = None;
+            s.settings.accounts[i].draft = false;
+            discard_drafts(&mut s);
+            assert_eq!(s.settings.accounts.len(), 3);
+        }
+        #[test]
+        fn dismissed_or_failed_draft_save_is_removed_when_worker_finishes() {
+            let mut s = initial(true, 0., 0);
+            s.settings.add_account();
+            let (_tx, rx) = mpsc::channel();
+            s.worker = Some(rx);
+            collapse(&mut s);
+            s.worker = None;
+            discard_drafts(&mut s);
+            assert_eq!(s.settings.accounts.len(), 2);
         }
         #[test]
         fn account_hit_targets_are_not_limited_to_two() {

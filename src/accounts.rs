@@ -15,6 +15,7 @@ pub fn now() -> u64 {
 #[derive(Clone)]
 pub struct Account {
     pub slot: usize,
+    pub draft: bool,
     pub name: String,
     pub usage: Option<Usage>,
 }
@@ -34,6 +35,7 @@ impl Default for Settings {
             accounts: (0..2)
                 .map(|i| Account {
                     slot: i + 1,
+                    draft: false,
                     name: format!("Account {}", i + 1),
                     usage: None,
                 })
@@ -76,6 +78,7 @@ impl Settings {
                     .unwrap_or_else(|| format!("Account {}", result.accounts.len() + 1));
                 result.accounts.push(Account {
                     slot,
+                    draft: false,
                     name,
                     usage: Usage::from_cache(&row["usage"]),
                 });
@@ -110,18 +113,23 @@ impl Settings {
         let slot = (1..=MAX_ACCOUNTS).find(|n| !self.accounts.iter().any(|a| a.slot == *n))?;
         self.accounts.push(Account {
             slot,
+            draft: true,
             name: format!("Account {}", i + 1),
             usage: None,
         });
         Some(i)
     }
-    pub fn save(&self) -> io::Result<()> {
+    fn to_value(&self) -> Value {
         let accounts: Vec<Value> = self
             .accounts
             .iter()
+            .filter(|a| !a.draft)
             .map(|a| json!({"slot":a.slot,"name": a.name, "usage": a.usage.as_ref().map(Usage::to_cache)}))
             .collect();
-        let data = serde_json::to_vec(&json!({"version":1,"accounts":accounts,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})).map_err(io::Error::other)?;
+        json!({"version":1,"accounts":accounts,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})
+    }
+    pub fn save(&self) -> io::Result<()> {
+        let data = serde_json::to_vec(&self.to_value()).map_err(io::Error::other)?;
         profiles::write_atomic(
             &profiles::base()?.join("muisland-settings.bin"),
             &profiles::dpapi(&data, true)?,
@@ -205,6 +213,20 @@ mod tests {
         assert!(Settings::from_value(&json!({"accounts":[]}))
             .accounts
             .is_empty());
+    }
+    #[test]
+    fn draft_accounts_never_enter_saved_settings_until_committed() {
+        let mut settings = Settings::default();
+        let i = settings.add_account().unwrap();
+        settings.accounts[i].name = "A draft name".into();
+        settings.menu_scale = 1.3;
+        let decoded = Settings::from_value(&settings.to_value());
+        assert_eq!(decoded.accounts.len(), 2);
+        assert_eq!(decoded.menu_scale, 1.3);
+        settings.accounts[i].draft = false;
+        let decoded = Settings::from_value(&settings.to_value());
+        assert_eq!(decoded.accounts.len(), 3);
+        assert_eq!(decoded.accounts[2].name, "A draft name");
     }
     #[test]
     fn names_support_unicode_and_reject_controls() {
