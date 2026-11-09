@@ -23,3 +23,18 @@ auth.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Credentials, certificates, and local audit output
+credentials.json
+credentials-*.json
+cookies.json
+session.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.dmp
+/*.bin
+/gitleaks*.json
+/gitleaks*.sarif
+/security-audit/
