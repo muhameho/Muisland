@@ -72,7 +72,7 @@ The demo is a browser simulation, not the Windows executable. All account operat
 After cloning the repository, open it locally with:
 
 ```powershell
-Start-Process .\docs\demo\index.html
+Start-Process .\demo\index.html
 ```
 
 
@@ -94,7 +94,7 @@ Start-Process .\docs\demo\index.html
 
 ### Windows
 
-- Windows with Claude Desktop installed and signed in.
+- Windows with Claude Desktop and/or Codex installed and signed in.
 - [Rust](https://www.rust-lang.org/tools/install), using the MSVC toolchain.
 - Visual Studio Build Tools with **Desktop development with C++** and the Windows SDK.
 
