@@ -4,6 +4,8 @@ mod accounts;
 #[cfg(windows)]
 mod backup;
 #[cfg(windows)]
+mod polling;
+#[cfg(windows)]
 mod profiles;
 #[cfg(windows)]
 mod usage;
@@ -15,6 +17,7 @@ fn main() {
 mod island {
     use crate::{
         accounts::{self, Settings},
+        polling::{self, PollState},
         profiles,
         usage::{self, Usage, Window},
     };
@@ -34,6 +37,7 @@ mod island {
         fn ReleaseCapture() -> i32;
         fn SetProcessDPIAware() -> i32;
         fn GetKeyState(key: i32) -> i16;
+        fn GetAsyncKeyState(key: i32) -> i16;
         fn OpenClipboard(hwnd: HWND) -> i32;
         fn GetClipboardData(format: u32) -> HANDLE;
         fn CloseClipboard() -> i32;
@@ -122,7 +126,7 @@ mod island {
     struct SyncResult {
         generation: u64,
         active: Option<usize>,
-        samples: Vec<(usize, String, Result<Usage, String>)>,
+        samples: Vec<(usize, String, Result<Usage, usage::Failure>)>,
     }
     struct State {
         settings: Settings,
@@ -151,6 +155,7 @@ mod island {
         focus: Action,
         down: Option<(i32, i32, Action)>,
         drag: bool,
+        mouse_was_down: bool,
         origin: (i32, i32),
         edit: Vec<u16>,
         caret: usize,
@@ -163,7 +168,7 @@ mod island {
         worker: Option<Receiver<Result<Outcome, String>>>,
         sync: Option<Receiver<SyncResult>>,
         sync_next: f32,
-        quota_next: f32,
+        polls: std::collections::HashMap<usize, PollState>,
         generation: u64,
         clock: Instant,
         last: Instant,
@@ -1262,7 +1267,7 @@ mod island {
                         if !s.preview && !s.network_allowed {
                             "Usage paused in this test session"
                         } else {
-                            "Usage updates automatically · (...) for settings"
+                            "Live usage · 30s active / 2m other accounts"
                         }
                     };
                     text(
@@ -1438,6 +1443,19 @@ mod island {
             }
         }
     }
+    fn collapse(s: &mut State) {
+        s.open = false;
+        s.peek = false;
+        s.peek_until = 0.;
+        s.edit_focus = false;
+        s.view = View::Home;
+        s.previous = None;
+        s.transition = 1.;
+        s.focus = Action::None;
+    }
+    fn drag_zone(s: &State, x: i32, y: i32) -> bool {
+        !s.open || (y < 58 && x < EW as i32 - 100)
+    }
     fn navigate(s: &mut State, next: View, _backwards: bool) {
         s.previous = Some(s.view.clone());
         s.view = next;
@@ -1479,11 +1497,9 @@ mod island {
             return;
         }
         let now = s.clock.elapsed().as_secs_f32();
-        s.sync_next = now + 10.;
-        let fetch = now >= s.quota_next && s.network_allowed;
-        if fetch {
-            s.quota_next = now + 300.;
-        }
+        s.sync_next = now + polling::IDENTITY_SECONDS;
+        let network_allowed = s.network_allowed;
+        let polls = s.polls.clone();
         let slots = s
             .identities
             .iter()
@@ -1506,10 +1522,22 @@ mod island {
                     .position(|(identity, _)| identity.as_ref() == Some(id))
             });
             let mut samples = Vec::new();
-            if fetch && !preview {
+            if network_allowed && !preview {
+                let active_slot = active.and_then(|i| slots.get(i).map(|(_, slot)| *slot));
                 for (id, slot) in slots {
                     if let Some(id) = id {
-                        samples.push((slot, id, usage::fetch(slot).map_err(|e| e.to_string())));
+                        if polls
+                            .get(&slot)
+                            .cloned()
+                            .unwrap_or_default()
+                            .due(now, active_slot == Some(slot))
+                        {
+                            samples.push((
+                                slot,
+                                id,
+                                usage::fetch(slot).map_err(usage::Failure::from),
+                            ));
+                        }
                     }
                 }
             }
@@ -1674,7 +1702,8 @@ mod island {
         s.generation += 1;
         s.sync = None;
         s.sync_next = 0.;
-        s.quota_next = 0.;
+        s.polls
+            .retain(|slot, _| s.settings.accounts.iter().any(|a| a.slot == *slot));
         refresh_slots(s);
         s.active =
             active_slot.and_then(|slot| s.settings.accounts.iter().position(|a| a.slot == slot));
@@ -1697,13 +1726,12 @@ mod island {
         match a {
             Action::None => {}
             Action::Toggle => {
-                s.open = !s.open;
-                s.peek = false;
-                s.edit_focus = false;
-                if !s.open {
-                    s.view = View::Home;
-                    s.previous = None;
-                    s.transition = 1.;
+                if s.open {
+                    collapse(s)
+                } else {
+                    s.open = true;
+                    s.peek = false;
+                    s.edit_focus = false;
                 }
             }
             Action::Preferences => navigate(s, View::Preferences, false),
@@ -1883,6 +1911,13 @@ mod island {
         }
         let s = &mut *ptr;
         match msg {
+            WM_ACTIVATE if (wp as u32 & 0xFFFF) == WA_INACTIVE => {
+                if s.open || s.peek {
+                    collapse(s);
+                    InvalidateRect(hwnd, null_mut(), 0);
+                }
+                0
+            }
             WM_DISPLAYCHANGE | WM_SETTINGCHANGE => {
                 s.work_areas = available_work_areas();
                 constrain(s);
@@ -1937,11 +1972,27 @@ mod island {
                 );
                 let mut cursor = zeroed();
                 GetCursorPos(&mut cursor);
+                let mouse_down = [0x01, 0x02, 0x04]
+                    .iter()
+                    .any(|key| GetAsyncKeyState(*key) < 0);
+                if mouse_down
+                    && !s.mouse_was_down
+                    && s.down.is_none()
+                    && !s.drag
+                    && (s.open || s.peek)
+                {
+                    let target = WindowFromPoint(cursor);
+                    if target != hwnd && IsChild(hwnd, target) == 0 {
+                        collapse(s);
+                        InvalidateRect(hwnd, null_mut(), 0);
+                    }
+                }
+                s.mouse_was_down = mouse_down;
                 ScreenToClient(hwnd, &mut cursor);
                 let x = cursor.x as f32 / s.scale;
                 let y = cursor.y as f32 / s.scale;
                 let inside = x >= 0. && x < s.w && y >= 0. && y < s.h;
-                if !s.open && s.settings.circle {
+                if !s.open && s.settings.circle && s.down.is_none() && !s.drag {
                     if inside && (s.peek || ((x - 38.).powi(2) + (y - 38.).powi(2) < 38f32.powi(2)))
                     {
                         s.peek = true;
@@ -2043,11 +2094,23 @@ mod island {
                         }
                         match result {
                             Ok(u) => {
+                                s.polls
+                                    .entry(slot)
+                                    .or_default()
+                                    .success(t, s.active == Some(i));
                                 s.settings.accounts[i].usage = Some(u);
                                 s.usage_errors[i].clear();
                                 measurements = true
                             }
-                            Err(e) => s.usage_errors[i] = e,
+                            Err(e) => {
+                                s.polls.entry(slot).or_default().failure(
+                                    t,
+                                    s.active == Some(i),
+                                    e.retry_after,
+                                    e.auth_required,
+                                );
+                                s.usage_errors[i] = e.message;
+                            }
                         }
                     }
                     if measurements {
@@ -2061,19 +2124,30 @@ mod island {
                     match result {
                         Ok(Outcome::Already(i)) => {
                             s.active = Some(i);
-                            notice(s,"Already logged in",format!("{} is the account currently logged into Claude. No switch was needed and Claude was left untouched.",s.settings.accounts[i].name),false)
+                            let visible = s.open;
+                            notice(s,"Already logged in",format!("{} is the account currently logged into Claude. No switch was needed and Claude was left untouched.",s.settings.accounts[i].name),false);
+                            if !visible {
+                                s.open = false;
+                                s.previous = None;
+                                s.transition = 1.;
+                            }
                         }
                         Ok(Outcome::NeedsSwitch(i)) => {
                             s.status.clear();
-                            navigate(s, View::SwitchConfirm(i), false);
-                            s.focus = Action::Cancel;
+                            if s.open {
+                                navigate(s, View::SwitchConfirm(i), false);
+                                s.focus = Action::Cancel;
+                            }
                         }
                         Ok(Outcome::NeedsClose(op)) => {
                             s.status.clear();
-                            navigate(s, View::Confirm(op), false);
-                            s.focus = Action::Cancel;
+                            if s.open {
+                                navigate(s, View::Confirm(op), false);
+                                s.focus = Action::Cancel;
+                            }
                         }
                         Ok(Outcome::Done(op, label)) => {
+                            let visible = s.open;
                             if let Op::Save(i) = op {
                                 s.settings.accounts[i].usage = None;
                                 s.usage_errors[i].clear();
@@ -2083,12 +2157,27 @@ mod island {
                                 s.active = Some(i);
                             }
                             refresh_slots(s);
-                            s.quota_next = 0.;
+                            if let Op::Save(i) | Op::Switch(i) = op {
+                                s.polls.remove(&s.settings.accounts[i].slot);
+                            }
                             s.sync_next = 0.;
                             navigate(s, View::Home, true);
+                            if !visible {
+                                s.open = false;
+                                s.previous = None;
+                                s.transition = 1.;
+                            }
                             status(s, label, false);
                         }
-                        Err(e) => notice(s, "Couldn't finish this action", e, true),
+                        Err(e) => {
+                            let visible = s.open;
+                            notice(s, "Couldn't finish this action", e, true);
+                            if !visible {
+                                s.open = false;
+                                s.previous = None;
+                                s.transition = 1.;
+                            }
+                        }
                     }
                     changed = true;
                 }
@@ -2129,7 +2218,7 @@ mod island {
                 s.down = Some((x, y, action));
                 s.drag = false;
                 s.focus = Action::None;
-                if y < 58 && x < if s.open { EW as i32 - 100 } else { 120 } {
+                if drag_zone(s, x, y) {
                     let mut p = zeroed();
                     GetCursorPos(&mut p);
                     s.origin = (p.x - (s.anchor - s.w * s.scale / 2.) as i32, p.y - s.top);
@@ -2141,9 +2230,7 @@ mod island {
             WM_MOUSEMOVE => {
                 if let Some((dx, dy, _)) = s.down {
                     let (x, y) = point(lp, s.scale);
-                    if dy < 58
-                        && dx < if s.open { EW as i32 - 100 } else { 120 }
-                        && ((x - dx).abs() > 4 || (y - dy).abs() > 4 || s.drag)
+                    if drag_zone(s, dx, dy) && ((x - dx).abs() > 4 || (y - dy).abs() > 4 || s.drag)
                     {
                         s.drag = true;
                         let mut p = zeroed();
@@ -2322,6 +2409,7 @@ mod island {
             focus: Action::None,
             down: None,
             drag: false,
+            mouse_was_down: false,
             origin: (0, 0),
             edit: Vec::new(),
             caret: 0,
@@ -2334,7 +2422,7 @@ mod island {
             worker: None,
             sync: None,
             sync_next: 0.,
-            quota_next: 0.,
+            polls: std::collections::HashMap::new(),
             generation: 0,
             clock: now,
             last: now,
@@ -2547,6 +2635,32 @@ mod island {
             assert!(y >= 48);
             assert!(y + (536. * k).round() as i32 <= 592);
             assert!(a >= 8.);
+        }
+        #[test]
+        fn collapsed_circle_and_hover_card_are_draggable_everywhere() {
+            let mut s = initial(true, 0., 0);
+            s.open = false;
+            s.settings.circle = true;
+            for (x, y) in [(38, 38), (38, 70), (52, 92), (210, 120)] {
+                assert!(drag_zone(&s, x, y));
+            }
+            s.open = true;
+            assert!(drag_zone(&s, 120, 28));
+            assert!(!drag_zone(&s, 347, 29));
+            assert!(!drag_zone(&s, 120, 150));
+        }
+        #[test]
+        fn dismiss_abandons_confirmation_and_preserves_saved_accounts() {
+            let mut s = initial(true, 0., 0);
+            navigate(&mut s, View::SwitchConfirm(1), false);
+            s.edit_focus = true;
+            collapse(&mut s);
+            assert!(!s.open);
+            assert!(!s.peek);
+            assert!(!s.edit_focus);
+            assert!(matches!(s.view, View::Home));
+            assert!(s.worker.is_none());
+            assert_eq!(s.settings.accounts.len(), 2);
         }
         #[test]
         fn all_header_areas_collapse_except_the_settings_control() {

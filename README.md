@@ -33,7 +33,7 @@ The window has transparent antialiased edges without an outline. Controls use me
 
 ## Usage data
 
-Usage updates automatically every five minutes for saved accounts; the current account is checked every ten seconds. There is no Refresh button. Percentages describe quota consumed, and hours describe time until reset, not guaranteed remaining working time. Missing readings stay unavailable; errors retain the last successful reading and its timestamp.
+Usage starts automatically on a normal launch, with no in-app consent or Refresh button. The logged-in account is polled every 30 seconds, other saved accounts every two minutes, and current-account identity every five seconds. Save/switch schedules a fresh read. This is near-live polling rather than a server-pushed stream. Errors back off automatically, HTTP 429 honors Retry-After, and authentication failures pause retries for 15 minutes. Percentages describe quota consumed, and hours describe time until reset, not guaranteed remaining working time. Missing readings stay unavailable; errors retain the last successful reading and its timestamp.
 
 The reader decrypts Claude's local Electron v10/AES-GCM cache using Windows DPAPI and selects credentials explicitly bound to the saved account. Fresh Desktop credentials are preferred only when their account ID matches that slot. Read-only HTTPS requests go only to `https://api.anthropic.com/api/oauth/usage`, with redirects disabled and normal Windows certificate validation. Chats/files are not sent, tokens are not printed, and this query does not refresh or modify tokens. Expired sessions require signing into Claude and saving the account again.
 
@@ -86,3 +86,12 @@ Relaunching reuses the running app's Windows application identity or executable,
 Dragging, expansion, hover, and size changes keep the whole island inside the nearest monitor's usable work area with an 8-pixel margin. Menus that exceed a small display fit automatically. Monitor removal, resolution changes, and taskbar/work-area changes re-check the bounds. Negative-coordinate secondary monitors are supported.
 
 The close/reopen sequence and snapshot rollback are verified with offline tests rather than terminating a live user session. Screen clamping is tested at each edge, on a secondary monitor, and with oversized menus.
+
+
+Automatic usage uses each user's own saved Claude session on that Windows account. No developer or previous user's credentials or consent are bundled or copied. Any authorization prompts from an external tool used to test the application are separate from Muisland's normal runtime behavior. The application does not click or accept operating-system or third-party permission dialogs on the user's behalf.
+
+
+## Circle drag and outside-click dismissal
+
+The entire collapsed pill/circle and hover card can be dragged. Hover morphing is held while the pointer is pressed, and dragging does not activate the open-menu click. The open menu remains draggable only from its header.
+Clicking outside closes the open menu or hover card. Dismissal abandons pending, unconfirmed switches, does not auto-save unfinished account-name edits, and does not execute confirmations. Previously confirmed background operations finish safely, but their completion does not reopen a dismissed menu. Focus deactivation handles ordinary clicks; a mouse-state check covers outside clicks on non-activating surfaces. The app does not install a global input hook or log external clicks.

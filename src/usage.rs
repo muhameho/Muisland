@@ -12,6 +12,52 @@ use windows_sys::Win32::{
     System::Time::SystemTimeToFileTime,
 };
 
+#[derive(Debug)]
+struct RateLimited {
+    seconds: u64,
+}
+impl std::fmt::Display for RateLimited {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Rate limited · automatic retry after cooldown")
+    }
+}
+impl std::error::Error for RateLimited {}
+#[derive(Clone, Debug)]
+pub struct Failure {
+    pub message: String,
+    pub retry_after: Option<u64>,
+    pub auth_required: bool,
+}
+impl From<io::Error> for Failure {
+    fn from(error: io::Error) -> Self {
+        Self {
+            retry_after: error
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<RateLimited>())
+                .map(|e| e.seconds),
+            auth_required: error.kind() == io::ErrorKind::PermissionDenied,
+            message: error.to_string(),
+        }
+    }
+}
+fn retry_after(value: &str, now: u64) -> Option<u64> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds.max(1));
+    }
+    let text = wide(value);
+    let mut system: SYSTEMTIME = unsafe { zeroed() };
+    if unsafe { WinHttpTimeToSystemTime(text.as_ptr(), &mut system) } == 0 {
+        return None;
+    }
+    let mut file = unsafe { zeroed() };
+    if unsafe { SystemTimeToFileTime(&system, &mut file) } == 0 {
+        return None;
+    }
+    let ticks = ((file.dwHighDateTime as u64) << 32) | file.dwLowDateTime as u64;
+    let timestamp = (ticks / 10_000_000).checked_sub(11_644_473_600)?;
+    Some(timestamp.saturating_sub(now).max(1))
+}
 #[derive(Clone, Debug)]
 pub struct Window {
     pub used: f64,
@@ -452,16 +498,40 @@ fn request(token: &str) -> io::Result<Value> {
         match status {
             200 => {}
             401 => {
-                return Err(io::Error::other(
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
                     "Session expired · open Claude and save account again",
                 ))
             }
             403 => {
-                return Err(io::Error::other(
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
                     "Usage access unavailable for this session",
                 ))
             }
-            429 => return Err(io::Error::other("Rate limited · wait before refreshing")),
+            429 => {
+                let mut buffer = [0u16; 128];
+                let mut length = (buffer.len() * 2) as u32;
+                let ok = WinHttpQueryHeaders(
+                    req.0,
+                    WINHTTP_QUERY_RETRY_AFTER,
+                    null(),
+                    buffer.as_mut_ptr().cast(),
+                    &mut length,
+                    null_mut(),
+                );
+                let seconds = if ok != 0 {
+                    let end = buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len());
+                    retry_after(&String::from_utf16_lossy(&buffer[..end]), accounts::now())
+                        .unwrap_or(60)
+                } else {
+                    60
+                };
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    RateLimited { seconds },
+                ));
+            }
             _ => {
                 return Err(io::Error::other(format!(
                     "Usage request returned HTTP {status}"
@@ -591,6 +661,20 @@ mod tests {
         assert_eq!(decrypt_gcm(&key, &blob).unwrap(), [0u8; 16]);
         *blob.last_mut().unwrap() ^= 1;
         assert!(decrypt_gcm(&key, &blob).is_err());
+    }
+    #[test]
+    fn retry_after_supports_seconds_dates_and_safe_fallback() {
+        assert_eq!(retry_after("120", 0), Some(120));
+        assert_eq!(retry_after("0", 0), Some(1));
+        let now = parse_time("2026-11-09T12:00:00Z").unwrap();
+        assert_eq!(retry_after("Mon, 09 Nov 2026 12:02:00 GMT", now), Some(120));
+        assert!(retry_after("bad", now).is_none());
+        let failure = Failure::from(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            RateLimited { seconds: 600 },
+        ));
+        assert_eq!(failure.retry_after, Some(600));
+        assert!(!failure.auth_required);
     }
     #[test]
     fn base64_decoding_validates_input() {
