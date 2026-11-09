@@ -48,11 +48,11 @@ mod island {
         fn GlobalUnlock(handle: HANDLE) -> i32;
         fn GlobalSize(handle: HANDLE) -> usize;
     }
-    const BG: u32 = 0x000A0C0B;
-    const WHITE: u32 = 0x00F1F4F2;
-    const MUTED: u32 = 0x00919992;
-    const GREEN: u32 = 0x0095E2BB;
-    const PANEL: u32 = 0x00171D19;
+    const BG: u32 = 0x0018100F;
+    const WHITE: u32 = 0x00F9F2F1;
+    const MUTED: u32 = 0x00B39F9B;
+    const ACCENT: u32 = 0x00FFB2C3;
+    const PANEL: u32 = 0x002C1E1C;
     const EW: f32 = 420.;
     const EH: f32 = 536.;
     const PILL_W: f32 = 228.;
@@ -361,6 +361,62 @@ mod island {
         SelectObject(dc, old);
         DeleteObject(pen);
     }
+    unsafe fn gear(dc: Dc, cx: f32, cy: f32, angle: f32, color: u32) {
+        let points: Vec<POINT> = (0..=32)
+            .map(|i| {
+                let a = angle + i as f32 * std::f32::consts::TAU / 32.;
+                let r = if i % 4 == 1 || i % 4 == 2 { 9. } else { 7. };
+                POINT {
+                    x: ((cx + r * a.cos()) * 2.).round() as i32,
+                    y: ((cy + r * a.sin()) * 2.).round() as i32,
+                }
+            })
+            .collect();
+        let pen = CreatePen(PS_SOLID, 2, color);
+        let old = SelectObject(dc, pen);
+        Polyline(dc, points.as_ptr(), points.len() as i32);
+        let brush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+        Ellipse(
+            dc,
+            ((cx - 3.) * 2.) as i32,
+            ((cy - 3.) * 2.) as i32,
+            ((cx + 3.) * 2.) as i32,
+            ((cy + 3.) * 2.) as i32,
+        );
+        SelectObject(dc, brush);
+        SelectObject(dc, old);
+        DeleteObject(pen);
+    }
+    unsafe fn adjustments(dc: Dc, x: i32, y: i32, color: u32) {
+        for (row, knob) in [(0, 4), (5, 10), (10, 6)] {
+            line(dc, &[(x, y + row), (x + 14, y + row)], 1, color);
+            panel(dc, x + knob - 2, y + row - 2, 4, 4, 2, color);
+        }
+    }
+    fn options_motion(previous: Option<&View>, next: &View, progress: f32) -> (i32, i32, f32) {
+        let eased = 1. - (1. - progress.clamp(0., 1.)).powi(3);
+        let from = previous.is_some_and(|v| matches!(v, View::Preferences));
+        let to = matches!(next, View::Preferences);
+        let direction = if to && !from {
+            1.
+        } else if from && !to {
+            -1.
+        } else {
+            0.
+        };
+        let gear_progress = if to {
+            eased
+        } else if from {
+            1. - eased
+        } else {
+            0.
+        };
+        (
+            (-12. * eased * direction).round() as i32,
+            (20. * (1. - eased) * direction).round() as i32,
+            gear_progress,
+        )
+    }
     unsafe fn mark(dc: Dc, x: i32, y: i32, size: i32, color: u32) {
         line(
             dc,
@@ -405,7 +461,7 @@ mod island {
         } else if used.unwrap_or(0.) >= 70. {
             0x009FC5F2
         } else {
-            GREEN
+            ACCENT
         };
         for y in ((cy - r - 5.) as i32).max(0)..((cy + r + 5.) as i32).min(height) {
             for x in ((cx - r - 5.) as i32).max(0)..((cx + r + 5.) as i32).min(width) {
@@ -429,7 +485,7 @@ mod island {
                 if total <= 0. {
                     continue;
                 }
-                let color = mix(0x00313B34, accent, (colored / total).clamp(0., 1.));
+                let color = mix(0x00433532, accent, (colored / total).clamp(0., 1.));
                 let offset = (y * bitmap.bmWidthBytes + x * 4) as usize;
                 for channel in 0..3 {
                     let foreground = ((color >> (channel * 8)) & 255) as f32;
@@ -540,9 +596,9 @@ mod island {
         let color = if danger {
             mix(0x00232834, 0x0031374C, hot(s, a))
         } else if primary {
-            mix(GREEN, WHITE, hot(s, a) * 0.14)
+            mix(ACCENT, WHITE, hot(s, a) * 0.14)
         } else {
-            mix(0x00232B26, 0x00364036, hot(s, a))
+            mix(0x00352926, 0x004B3938, hot(s, a))
         };
         let radius = if w == h {
             h / 2
@@ -601,13 +657,13 @@ mod island {
                 w - 24,
                 2,
                 1,
-                if primary && !danger { BG } else { GREEN },
+                if primary && !danger { BG } else { ACCENT },
             );
         }
     }
 
     unsafe fn toggle(dc: Dc, s: &State, a: Action, y: i32, label: &str, value: bool) {
-        panel(dc, 24, y, 372, 48, 16, mix(PANEL, 0x002A342E, hot(s, a)));
+        panel(dc, 24, y, 372, 48, 16, mix(PANEL, 0x00413532, hot(s, a)));
         text(dc, 38, y + 16, 13, 500, label, WHITE, 280);
         panel(
             dc,
@@ -616,7 +672,7 @@ mod island {
             40,
             18,
             9,
-            if value { GREEN } else { 0x00434B45 },
+            if value { ACCENT } else { 0x00574744 },
         );
         panel(
             dc,
@@ -634,7 +690,7 @@ mod island {
             .map(|w| format!("{label} · {:.0}% used", w.used))
             .unwrap_or_else(|| format!("{label} · —"));
         text(dc, x, y, 11, 600, &title, WHITE, width);
-        panel(dc, x, y + 18, width, 3, 1, 0x00313B34);
+        panel(dc, x, y + 18, width, 3, 1, 0x00433532);
         if let Some(w) = window {
             let color = if w.resets.is_some_and(|t| t <= now) {
                 MUTED
@@ -643,7 +699,7 @@ mod island {
             } else if w.used >= 70. {
                 0x009FC5F2
             } else {
-                GREEN
+                ACCENT
             };
             let fill = (width as f64 * w.used / 100.) as i32;
             if fill > 0 {
@@ -696,8 +752,8 @@ mod island {
                 );
                 if s.settings.accounts.is_empty() {
                     panel(dc, 16, 126, 388, 238, 20, PANEL);
-                    panel(dc, 185, 165, 50, 50, 25, 0x0026352D);
-                    mark(dc, 201, 181, 18, GREEN);
+                    panel(dc, 185, 165, 50, 50, 25, 0x00473732);
+                    mark(dc, 201, 181, 18, ACCENT);
                     text(dc, 49, 239, 21, 600, "Your island starts here.", WHITE, 335);
                     text(
                         dc,
@@ -723,7 +779,7 @@ mod island {
                         388,
                         114,
                         20,
-                        mix(PANEL, 0x00242F27, hot(s, Action::Switch(i)) * 0.8),
+                        mix(PANEL, 0x00433330, hot(s, Action::Switch(i)) * 0.8),
                     );
                     panel(
                         dc,
@@ -733,12 +789,12 @@ mod island {
                         34,
                         17,
                         if s.active == Some(i) {
-                            0x0036483A
+                            0x005C4541
                         } else {
-                            0x00382F2B
+                            0x00423330
                         },
                     );
-                    text(dc, 39, y + 20, 15, 600, &(i + 1).to_string(), GREEN, 25);
+                    text(dc, 39, y + 20, 15, 600, &(i + 1).to_string(), ACCENT, 25);
                     text(dc, 75, y + 12, 15, 600, &account.name, WHITE, 213);
                     let sub = if s.preview {
                         "Preview · sample data".into()
@@ -769,7 +825,13 @@ mod island {
                         }
                     };
                     text(dc, 75, y + 33, 10, 400, &sub, MUTED, 213);
-                    button(dc, s, Action::Details(i), 296, y + 15, 28, 30, "···", false);
+                    button(dc, s, Action::Details(i), 296, y + 15, 28, 30, "", false);
+                    adjustments(
+                        dc,
+                        303,
+                        y + 25,
+                        mix(MUTED, WHITE, hot(s, Action::Details(i))),
+                    );
                     button(dc, s, Action::Save(i), 329, y + 15, 60, 30, "Save", false);
                     quota(
                         dc,
@@ -841,7 +903,7 @@ mod island {
                         MUTED,
                         370,
                     );
-                    panel(dc, 24, 126, 372, 44, 12, 0x00212723);
+                    panel(dc, 24, 126, 372, 44, 12, 0x00352A27);
                     let label = if matches!(s.view,View::Details(j)if j==*i) {
                         String::from_utf16_lossy(&s.edit)
                     } else {
@@ -855,13 +917,13 @@ mod island {
                             ((label.chars().count() * 9) as i32).min(345),
                             24,
                             3,
-                            0x004A604F,
+                            0x008E7068,
                         );
                     }
                     text(dc, 35, 137, 17, 400, &label, WHITE, 345);
                     if s.edit_focus && ((s.clock.elapsed().as_millis() / 500) % 2 == 0) {
                         let cx = 35 + (s.caret as i32 * 8).min(339);
-                        panel(dc, cx, 138, 1, 22, 0, GREEN);
+                        panel(dc, cx, 138, 1, 22, 0, ACCENT);
                     }
                     text(
                         dc,
@@ -1062,8 +1124,8 @@ mod island {
                 );
             }
             View::Notice(title, body) => {
-                panel(dc, 25, 80, 34, 34, 17, 0x00283530);
-                text(dc, 37, 84, 20, 600, "i", GREEN, 20);
+                panel(dc, 25, 80, 34, 34, 17, 0x004A3734);
+                text(dc, 37, 84, 20, 600, "i", ACCENT, 20);
                 text(dc, 24, 132, 23, 600, title, WHITE, 372);
                 paragraph(dc, 25, 180, body, if s.error { 0x009BA7F0 } else { MUTED });
                 button(dc, s, Action::Back, 24, 410, 372, 42, "Got it", true)
@@ -1077,7 +1139,7 @@ mod island {
                     16,
                     600,
                     &s.settings.accounts[*index].name,
-                    GREEN,
+                    ACCENT,
                     365,
                 );
                 paragraph(dc,25,180,"Confirm to open this saved account. If Claude is running, it will close first. Local tasks may stop and unsaved work may be lost.",MUTED);
@@ -1215,8 +1277,8 @@ mod island {
             ring(source.dc, cx, cy, 27., used);
             mark(source.dc, cx as i32 - 9, cy as i32 - 9, 18, WHITE);
         } else {
-            panel(source.dc, 16, 14, 30, 30, 15, 0x0026352D);
-            mark(source.dc, 24, 22, 14, GREEN);
+            panel(source.dc, 16, 14, 30, 30, 15, 0x00473732);
+            mark(source.dc, 24, 22, 14, ACCENT);
             text(source.dc, 57, 17, 18, 600, "Muisland", WHITE, 170);
             let w = lw;
             button(
@@ -1231,30 +1293,44 @@ mod island {
                 false,
             );
             if s.open {
-                text(
+                let (_, _, rotation) = options_motion(s.previous.as_ref(), &s.view, s.transition);
+                panel(
                     source.dc,
-                    w - 81,
-                    15,
-                    21,
-                    600,
-                    "···",
-                    mix(MUTED, WHITE, hot(s, Action::Preferences)),
-                    30,
+                    w - 88,
+                    12,
+                    32,
+                    34,
+                    12,
+                    mix(PANEL, 0x004B3938, hot(s, Action::Preferences) * 0.8),
+                );
+                gear(
+                    source.dc,
+                    (w - 72) as f32,
+                    29.,
+                    rotation * std::f32::consts::FRAC_PI_4,
+                    mix(MUTED, ACCENT, rotation.max(hot(s, Action::Preferences))),
                 );
             }
             if s.reveal > 0.01 && lh > 70 {
                 let layer = Surface::new(lw * 2, lh * 2);
                 layer.clear();
                 let motion = 1. - (1. - s.transition).powi(3);
+                let (outgoing, incoming, _) =
+                    options_motion(s.previous.as_ref(), &s.view, s.transition);
                 if let Some(previous) = &s.previous {
                     let saved = SaveDC(source.dc);
                     IntersectClipRect(source.dc, 0, 58 * 2, lw * 2, lh * 2);
-                    SetViewportOrgEx(source.dc, 0, 0, null_mut());
+                    SetViewportOrgEx(source.dc, outgoing * 2, 0, null_mut());
                     draw_view(source.dc, s, previous);
                     RestoreDC(source.dc, saved);
                 }
                 let saved = SaveDC(layer.dc);
-                SetViewportOrgEx(layer.dc, 0, ((1. - s.reveal) * 12.) as i32 * 2, null_mut());
+                SetViewportOrgEx(
+                    layer.dc,
+                    incoming * 2,
+                    ((1. - s.reveal) * 12.) as i32 * 2,
+                    null_mut(),
+                );
                 draw_view(layer.dc, s, &s.view);
                 RestoreDC(layer.dc, saved);
                 let page_opacity = if matches!(s.view, View::Home) {
@@ -1473,7 +1549,7 @@ mod island {
             source.dc,
             &[(inset + 20, 65), (inset + 276, 65)],
             1,
-            0x002A332D,
+            0x00433732,
         );
         quota(
             source.dc,
@@ -2034,7 +2110,13 @@ mod island {
                     s.edit_focus = false;
                 }
             }
-            Action::Preferences => navigate(s, View::Preferences, false),
+            Action::Preferences => {
+                if matches!(s.view, View::Preferences) {
+                    navigate(s, View::Home, true)
+                } else {
+                    navigate(s, View::Preferences, false)
+                }
+            }
             Action::Back | Action::Cancel => {
                 discard_drafts(s);
                 navigate(s, View::Home, true)
@@ -2391,7 +2473,7 @@ mod island {
                     if (reveal - s.reveal).abs() < 0.002 {
                         s.reveal = reveal;
                     }
-                    s.transition = (s.transition + dt * 7.).min(1.);
+                    s.transition = (s.transition + dt * 5.5).min(1.);
                 }
                 if s.transition >= 1. {
                     s.previous = None;
@@ -3118,6 +3200,25 @@ mod island {
                     .unwrap();
                 assert_eq!(p.scale, 1.0);
             }
+        }
+        #[test]
+        fn options_enter_and_exit_move_in_opposite_directions_and_settle() {
+            let enter = options_motion(Some(&View::Home), &View::Preferences, 0.);
+            let exit = options_motion(Some(&View::Preferences), &View::Home, 0.);
+            assert_eq!(enter, (0, 20, 0.));
+            assert_eq!(exit, (0, -20, 1.));
+            assert_eq!(
+                options_motion(Some(&View::Home), &View::Preferences, 1.),
+                (-12, 0, 1.)
+            );
+            assert_eq!(
+                options_motion(Some(&View::Preferences), &View::Home, 1.),
+                (12, 0, 0.)
+            );
+            assert_eq!(
+                options_motion(Some(&View::Home), &View::Details(0), 0.5).0,
+                0
+            );
         }
         #[test]
         fn page_navigation_uses_only_the_short_fade() {

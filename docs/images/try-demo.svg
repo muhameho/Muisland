@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="252" height="48" viewBox="0 0 252 48" role="img" aria-label="Try interactive demo">
-  <rect width="252" height="48" rx="15" fill="#badd94"/>
-  <text x="22" y="30" fill="#16210e" font-family="Segoe UI,Arial,sans-serif" font-size="15" font-weight="600">Try interactive demo</text>
-  <path d="M217 17h10v10m0-10-13 13" fill="none" stroke="#16210e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="252" height="48" rx="15" fill="#c3b2ff"/>
+  <text x="22" y="30" fill="#21172f" font-family="Segoe UI,Arial,sans-serif" font-size="15" font-weight="600">Try interactive demo</text>
+  <path d="M217 17h10v10m0-10-13 13" fill="none" stroke="#21172f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

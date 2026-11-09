@@ -119,7 +119,7 @@ The output is `target\release\muisland.exe`. Build outputs are excluded from Git
 
 **+ Add account** creates a temporary draft. Enter a name and choose **Save account** to capture the Claude sign-in. The new entry becomes permanent only after capture succeeds. Back, Cancel, Escape, or closing the island discards an unfinished draft; saving unrelated preferences cannot accidentally keep it. A confirmed save already running is allowed to finish safely.
 
-Use an account card's **(...)** menu to rename or remove it. Removing an account archives its encrypted snapshot locally; it does not sign Claude out or delete cloud chats.
+Use an account card's **adjustments icon** to rename or remove it. Removing an account archives its encrypted snapshot locally; it does not sign Claude out or delete cloud chats.
 
 Muisland does not force-kill Claude. If Claude remains in the system tray, quit it normally and retry. Finish or save local work before confirming a close or switch.
 
@@ -127,7 +127,7 @@ Muisland does not force-kill Claude. If Claude remains in the system tray, quit 
 
 ## Appearance
 
-Open the header **(...)** to access Preferences:
+Open the header **gear icon** to access Preferences:
 
 | Setting | Range | Controls |
 | --- | --- | --- |
@@ -147,15 +147,15 @@ Drag the collapsed island or the open menu's left header to move it. Hovering th
 | Hover the circle | Reveals a separate usage bubble with a short eased fade, scale, and slide |
 | Move from circle to bubble | Keeps the card visible, with a short grace period across the gap |
 | Click the circle or bubble | Opens the account menu |
-| Click the open header | Collapses the menu, except for the explicit Preferences control |
+| Click the open header | Collapses the menu, except for the gear icon |
 | Drag the left header | Moves the open menu |
 | Click outside | Collapses the menu and abandons an unconfirmed action |
 | Press Escape | Returns to the account page from a subpage, or collapses the account menu |
 | Click an account card | Opens switch confirmation, or reports that it is already logged in |
-| Click an account's (...) | Opens naming and removal controls |
+| Click an account's adjustments icon | Opens naming and removal controls |
 | Enable Reduce motion | Makes transitions immediate |
 
-The native window uses spring motion for opening and resizing, a short fade for page navigation, and an eased hover reveal. Menu fitting has its own geometry: opening a larger menu near a corner does not replace the saved floating position. Closing returns the circle or pill to that position.
+The native window uses spring motion for opening and resizing, a short fade for account-page navigation and a directional fade/slide into and out of Preferences, and an eased hover reveal. Menu fitting has its own geometry: opening a larger menu near a corner does not replace the saved floating position. Closing returns the circle or pill to that position.
 
 ## Usage and privacy
 
