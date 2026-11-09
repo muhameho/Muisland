@@ -1,11 +1,13 @@
-FROM ubuntu:24.04
+ARG DISTRO=ubuntu:24.04
+FROM ${DISTRO}
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential python3 python3-gi python3-gi-cairo python3-cryptography gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libsecret-tools dbus-x11 xvfb xauth && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential python3 python3-gi python3-gi-cairo python3-cryptography gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-gtklayershell-0.1 libsecret-tools gnome-keyring dbus-x11 xvfb xauth sway && rm -rf /var/lib/apt/lists/*
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh && sh /tmp/rustup.sh -y --profile minimal && rm /tmp/rustup.sh
 ENV PATH=/root/.cargo/bin:$PATH
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY linux ./linux
+COPY build.sh README.md ./
 RUN cargo build --release --locked && python3 -m unittest discover -s linux -v && ./target/release/muisland --check-env
 CMD ["dbus-run-session", "--", "xvfb-run", "-a", "./target/release/muisland", "--preview", "--smoke-test"]

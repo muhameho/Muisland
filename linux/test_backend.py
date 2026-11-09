@@ -189,6 +189,88 @@ class LinuxBackendTests(unittest.TestCase):
             self.assertEqual(result["lastKnownAccountUuid"], "two")
             self.assertEqual(result["theme"], "dark")
 
+    def test_position_survives_restart_and_rejects_nonfinite_values(self):
+        service = backend.Service(vault=self.vault, network=False)
+        service.handle("position", {"position": [-1880, 320]})
+        loaded = backend.Service(vault=self.vault, network=False)
+        self.assertEqual(loaded.settings["position"], [-1880, 320])
+        for value in ([float("nan"), 0], [float("inf"), 0], [0], [True, 0]):
+            with self.assertRaises(ValueError):
+                service.handle("position", {"position": value})
+
+    def test_clamping_handles_negative_monitors_and_removed_screens(self):
+        self.assertEqual(
+            backend.clamped_position([-2000, -500], [76, 76], [-1920, 0, 1920, 1080]),
+            (-1912, 8),
+        )
+        self.assertEqual(
+            backend.clamped_position([10000, 10000], [76, 76], [0, 0, 1280, 720]),
+            (1196, 636),
+        )
+        self.assertEqual(
+            backend.clamped_position([-1900, 300], [76, 76], [0, 0, 1280, 720]),
+            (8, 300),
+        )
+
+    def test_missing_key_cannot_replace_key_for_existing_profiles(self):
+        self.vault.write_json("settings.bin", {"theme": 2})
+        vault = backend.Vault(self.vault.root)
+        with patch.object(
+            backend.shutil, "which", return_value="secret-tool"
+        ), patch.object(backend.subprocess, "run") as run:
+            run.return_value.stdout = b""
+            with self.assertRaisesRegex(RuntimeError, "original desktop keyring"):
+                vault.cipher()
+            self.assertEqual(run.call_count, 1)
+        self.assertEqual(self.vault.read_json("settings.bin"), {"theme": 2})
+
+    def test_autostart_can_be_disabled_without_touching_profiles(self):
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.root)}):
+            self.assertTrue(backend.set_autostart(True))
+            self.assertIn("--background", backend.autostart_path().read_text())
+            self.assertFalse(backend.set_autostart(False))
+
+    def test_claude_save_reopens_after_capture_failure_without_overwriting_profile(
+        self,
+    ):
+        service = backend.Service(vault=self.vault, network=False)
+        service.handle("add")
+        self.vault.write_json("claude/account-1.bin", {"previous": True})
+        with patch.object(
+            backend, "claude_config", return_value={"lastKnownAccountUuid": "first"}
+        ), patch.object(
+            backend, "claude_executable", return_value="/opt/claude/claude-desktop"
+        ), patch.object(
+            backend, "claude_processes", return_value=[123]
+        ), patch.object(
+            backend, "close_claude"
+        ) as close, patch.object(
+            backend, "capture_claude", side_effect=ValueError("unsupported format")
+        ), patch.object(
+            backend, "launch_claude"
+        ) as reopen:
+            with self.assertRaisesRegex(ValueError, "unsupported format"):
+                service.handle("save", {"slot": 1, "confirmed": True})
+            close.assert_called_once()
+            reopen.assert_called_once_with("/opt/claude/claude-desktop")
+        self.assertEqual(
+            self.vault.read_json("claude/account-1.bin"), {"previous": True}
+        )
+        self.assertFalse(service.busy)
+        self.assertTrue(service.settings["claude"][0]["draft"])
+
+    def test_claude_save_never_closes_app_if_relaunch_is_unavailable(self):
+        service = backend.Service(vault=self.vault, network=False)
+        service.handle("add")
+        with patch.object(
+            backend, "claude_config", return_value={"lastKnownAccountUuid": "first"}
+        ), patch.object(backend, "claude_executable", return_value=None), patch.object(
+            backend, "close_claude"
+        ) as close:
+            with self.assertRaises(FileNotFoundError):
+                service.handle("save", {"slot": 1, "confirmed": True})
+            close.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

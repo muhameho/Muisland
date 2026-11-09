@@ -14,7 +14,19 @@ mod usage;
 #[cfg(target_os = "linux")]
 fn main() {
     use std::process::{Command, Stdio};
-    let bootstrap="import sys,json,types\np=json.load(sys.stdin)\nbackend=types.ModuleType('backend')\nsys.modules['backend']=backend\nexec(p['backend'],backend.__dict__)\nMUISLAND_HTML=p['html']\nexec(p['app'])";
+    let bootstrap = r#"import sys,json,types
+p=json.load(sys.stdin)
+backend=types.ModuleType('backend')
+sys.modules['backend']=backend
+MUISLAND_HTML=p['html']
+MUISLAND_VERSION=p['version']
+try:
+    exec(p['backend'],backend.__dict__)
+    exec(p['app'])
+except ImportError:
+    print('Muisland needs system Python 3, PyGObject/Cairo, GTK 3, WebKitGTK and cryptography. Install the Linux runtime dependencies in docs/LINUX.md.', file=sys.stderr)
+    sys.exit(1)
+"#;
     let mut child = match Command::new("/usr/bin/python3")
         .arg("-c")
         .arg(bootstrap)
@@ -28,7 +40,7 @@ fn main() {
             std::process::exit(1)
         }
     };
-    let payload = serde_json::json!({"backend":include_str!("../linux/backend.py"),"html":include_str!("../linux/island.html"),"app":include_str!("../linux/app.py")});
+    let payload = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"backend":include_str!("../linux/backend.py"),"html":include_str!("../linux/island.html"),"app":include_str!("../linux/app.py")});
     let result = serde_json::to_writer(child.stdin.take().unwrap(), &payload);
     if result.is_err() {
         let _ = child.kill();

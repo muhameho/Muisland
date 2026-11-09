@@ -2,8 +2,17 @@
 Type=Application
 Name=Muisland
 Comment=Claude and Codex accounts and usage
-Exec=muisland
-Icon=preferences-system
+Exec=muisland --show
+Icon=io.github.muhameho.Muisland
 Terminal=false
 Categories=Utility;
 StartupWMClass=Muisland
+Actions=Reset;Quit;
+
+[Desktop Action Reset]
+Name=Reset floating position
+Exec=muisland --reset-position
+
+[Desktop Action Quit]
+Name=Quit Muisland
+Exec=muisland --quit

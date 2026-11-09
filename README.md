@@ -114,6 +114,8 @@ The output is `target\release\muisland.exe`. Build outputs are excluded from Git
 
 ### Ubuntu / Debian and other Linux desktops (beta)
 
+[Linux installation, supported desktop sessions, and an actual GTK screenshot](docs/LINUX.md)
+
 Ubuntu is a Linux distribution. The Linux port targets Ubuntu 24.04 first, with equivalent packages needed on other distributions. The launcher embeds its Python runtime sources and UI; it uses the system Python and GTK libraries rather than replacing the Windows renderer.
 
 ```bash
@@ -127,15 +129,16 @@ bash build.sh
 ./target/release/muisland
 ```
 
-To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.4.0_<architecture>.deb`. The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
+To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.0_<architecture>.deb` using `sudo apt install ./muisland_0.5.0_amd64.deb`. `bash build.sh --tar` creates a portable archive with a per-user installer and desktop icon. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
 
 - **X11:** floating placement, corner clamping, dragging, and an independent hover window.
 - **Wayland sessions with XWayland:** the port selects the X11 backend when `DISPLAY` is available, retaining those placement controls.
-- **Native Wayland without XWayland:** compositor rules can restrict absolute positioning and always-on-top. Full floating parity is not guaranteed.
+- **Native Wayland with GTK Layer Shell (KDE/Sway/wlroots):** floating placement and a draggable circle use the layer-shell protocol. Select it using `GDK_BACKEND=wayland`. GNOME uses XWayland for floating placement; an ordinary native Wayland window cannot override compositor restrictions.
+- **Desktop integration:** a proper app icon and launcher, launch-again-to-open, optional XDG autostart, saved floating location, monitor-change recovery, and `--reset-position` / `--show` / `--quit` commands.
 - **Storage:** an unlocked Secret Service desktop keyring is required. There is no plaintext fallback for Muisland's own profiles.
 - **Claude Desktop:** the official Linux beta supports Ubuntu/Debian. Detection uses `$XDG_CONFIG_HOME/Claude`, `claude`, or `claude-desktop`; `MUISLAND_CLAUDE_CONFIG` can specify the correct profile directory. Linux credential decryption supports Chromium v10/v11 safe-storage formats and fails safely for unrecognized formats.
 
-Linux builds, encrypted-backend tests, and GTK/WebKit startup plus native-bridge smoke tests run on Ubuntu. A real signed-in Claude session on Linux and every desktop compositor have **not** been verified. See [Anthropic's Linux requirements](https://support.claude.com/en/articles/10065433-install-claude-desktop).
+Linux builds, encrypted-backend tests, a real Secret Service roundtrip, and X11/native Wayland smoke tests run on Ubuntu 22.04 and 24.04. A real signed-in Claude session on Linux and every desktop compositor have **not** been verified. See [Anthropic's Linux requirements](https://support.claude.com/en/articles/10065433-install-claude-desktop).
 
 ## Providers
 

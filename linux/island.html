@@ -669,12 +669,12 @@
           "reduce",
           data.settings.reduced_motion,
         );
-        document.body.style.zoom =
+        document.body.style.zoom = window.nativeScale ?? (
           role === "float"
             ? data.settings.float_scale
             : role === "bubble"
               ? data.settings.bubble_scale
-              : data.settings.menu_scale;
+              : data.settings.menu_scale);
         if (role === "float") {
           const u = active()?.usage;
           const used = u?.session?.used ?? u?.weekly?.used ?? 0;
@@ -721,7 +721,7 @@
                 `<label class="size-row">${label}<input type="range" data-size="${key}" min="${min}" max="${max}" step=".05" value="${data.settings[key]}"><output>${Math.round(data.settings[key] * 100)}%</output></label>`,
             )
             .join("");
-          content += `<label class="toggle-row">Circle with usage ring<input class="toggle" type="checkbox" data-toggle="circle" ${data.settings.circle ? "checked" : ""}></label><label class="toggle-row">Reduce motion<input class="toggle" type="checkbox" data-toggle="reduced_motion" ${data.settings.reduced_motion ? "checked" : ""}></label><button class="wide" data-operation="rollback">Restore previous sign-in</button>${data.provider === "claude" ? '<button class="wide" data-operation="recover">Recover local backup to folder</button>' : ""}<div class="row-buttons"><button data-back>Back</button><button data-quit>Quit</button></div>`;
+          content += `<label class="toggle-row">Circle with usage ring<input class="toggle" type="checkbox" data-toggle="circle" ${data.settings.circle ? "checked" : ""}></label><label class="toggle-row">Reduce motion<input class="toggle" type="checkbox" data-toggle="reduced_motion" ${data.settings.reduced_motion ? "checked" : ""}></label>${native ? `<label class="toggle-row">Start with desktop<input class="toggle" type="checkbox" data-autostart ${data.desktop?.autostart ? "checked" : ""}></label><button class="wide" data-reset-position>Reset floating position</button><p class="hint">${esc(data.desktop?.backend || "Linux desktop")}</p>` : ""}<button class="wide" data-operation="rollback">Restore previous sign-in</button>${data.provider === "claude" ? '<button class="wide" data-operation="recover">Recover local backup to folder</button>' : ""}<div class="row-buttons"><button data-back>Back</button><button data-quit>Quit</button></div>`;
         } else if (view === "edit") {
           let a = data.accounts.find((a) => a.slot === editing);
           if (!a) {
@@ -741,7 +741,7 @@
           }[pending.action];
           content = `<h1>${title}</h1><p class="selected-name">${esc(a?.name || "")}</p><p class="confirm-copy">${pending.action === "remove" ? "The encrypted sign-in is archived locally. Your cloud chats and files are not deleted." : data.provider === "codex" ? "This changes only the Codex file sign-in cache. New CLI sessions use it; restart open Codex sessions to reload. The Desktop host may retain its own login." : pending.action === "recover" ? "Decrypt the latest local checkpoint into a separate folder. Claude’s live files will not be overwritten." : "Claude will close normally and reopen. Local tasks may stop and unsaved work may be lost. Nothing changes until you confirm."}</p><div class="row-buttons"><button data-cancel>Cancel</button><button class="primary" data-confirm>Confirm</button></div>`;
         } else
-          content = `<h1>Account status</h1><p class="confirm-copy">${esc(notice)}</p><button class="wide" ${data.error ? "data-quit" : "data-back"}>${data.error ? "Quit Muisland" : "Back"}</button>`;
+          content = `<h1>Account status</h1><p class="confirm-copy">${esc(notice)}</p><button class="wide" ${data.error ? "data-retry-storage" : "data-back"}>${data.error ? "Retry keyring" : "Back"}</button>${data.error ? '<button class="wide" data-quit>Quit Muisland</button>' : ""}`;
         root.innerHTML = `${native ? "" : '<p class="preview-label">Linux interface preview · invented accounts · no native operations</p>'}<section class="surface"><header class="header"><span class="logo">M</span><span class="brand">Muisland</span><button class="icon ${view === "prefs" ? "active" : ""}" data-prefs aria-label="Preferences">⚙</button><button class="icon" data-close aria-label="Collapse">−</button></header><nav class="providers"><button class="${data.provider === "claude" ? "active" : ""}" data-provider="claude">Claude</button><button class="${data.provider === "codex" ? "active" : ""}" data-provider="codex">Codex</button></nav><main class="content ${cls} ${data.busy ? "busy" : ""}">${content}</main><footer class="footer">${data.busy ? "Working on your account…" : data.preview ? "Preview · sample data" : data.provider === "codex" ? "Codex · file-auth profiles · 30s active / 2m others" : "Claude · 30s active / 2m other accounts"}</footer></section>`;
       }
       function confirm(action, slot) {
@@ -760,6 +760,8 @@
             await invoke("view", { view: "float" });
           return;
         }
+        if (b.hasAttribute("data-retry-storage")) { const result = await command("retry-storage"); if (result?.settings) { data = result; view = "home"; render(); } return; }
+        if (b.hasAttribute("data-reset-position")) { await invoke("reset-position"); return; }
         if (b.dataset.provider) {
           await command("provider", { provider: b.dataset.provider });
           view = "home";
@@ -846,6 +848,7 @@
         } else if (b.hasAttribute("data-quit")) await invoke("quit");
       });
       root.addEventListener("change", (e) => {
+        if (e.target.hasAttribute("data-autostart")) command("autostart", {enabled:e.target.checked});
         if (e.target.dataset.toggle)
           command("settings", { [e.target.dataset.toggle]: e.target.checked });
         if (e.target.dataset.size)

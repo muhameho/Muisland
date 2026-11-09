@@ -1,6 +1,6 @@
 """Linux platform services. No GUI imports and no credentials in UI state/logs."""
 
-import base64, copy, datetime, hashlib, json, os, queue, secrets, shutil, signal, ssl, subprocess, threading, time, urllib.request, urllib.error
+import base64, copy, datetime, hashlib, json, math, os, queue, secrets, shutil, signal, ssl, subprocess, threading, time, urllib.request, urllib.error
 
 try:
     import tomllib
@@ -91,6 +91,10 @@ class Vault:
             )
             value = result.stdout.strip()
             if not value:
+                if any(self.root.rglob("*.bin")):
+                    raise RuntimeError(
+                        "The existing Muisland encryption key is unavailable. Unlock the original desktop keyring; encrypted profiles were kept."
+                    )
                 value = base64.b64encode(secrets.token_bytes(32))
                 saved = subprocess.run(
                     [
@@ -531,8 +535,18 @@ def close_claude():
         time.sleep(0.15)
 
 
-def launch_claude():
-    executable = shutil.which("claude-desktop")
+def claude_executable():
+    executable = os.environ.get("MUISLAND_CLAUDE_BIN") or shutil.which("claude-desktop")
+    if not executable:
+        for pid in claude_processes():
+            candidate = Path(f"/proc/{pid}/exe").resolve()
+            if candidate.is_file():
+                return str(candidate)
+    return executable
+
+
+def launch_claude(executable=None):
+    executable = executable or claude_executable()
     if not executable:
         raise FileNotFoundError("claude-desktop executable was not found")
     subprocess.Popen(
@@ -644,11 +658,14 @@ class Service:
             "circle": True,
             "reduced_motion": False,
             "protect_local": False,
+            "position": [100, 80],
             "claude": [],
             "codex": [],
         }
         if not preview and self.vault.exists("settings.bin"):
             self.settings.update(self.vault.read_json("settings.bin"))
+        if not preview:
+            self.vault.cipher()
         if preview:
             for provider in ("claude", "codex"):
                 self.settings[provider] = [
@@ -810,6 +827,10 @@ class Service:
         with self.lock:
             if action == "state":
                 return self.state()
+            if action == "position":
+                self.settings["position"] = validated_position(data.get("position"))
+                self.persist()
+                return self.state()
             if self.busy:
                 raise RuntimeError("Wait for the current operation")
             p = self.settings["provider"]
@@ -925,6 +946,11 @@ class Service:
                 expected = (
                     claude_identity(claude_config()) if action == "save" else None
                 )
+                executable = claude_executable()
+                if not executable:
+                    raise FileNotFoundError(
+                        "Install Claude Desktop or set MUISLAND_CLAUDE_BIN before changing profiles."
+                    )
                 was_running = bool(claude_processes())
                 close_claude()
                 try:
@@ -951,9 +977,70 @@ class Service:
                         restore_claude(auth)
                 finally:
                     if was_running or action == "save":
-                        launch_claude()
+                        launch_claude(executable)
             self.persist()
             self.next_poll.clear()
             return self.state()
         finally:
             self.busy = False
+
+
+def validated_position(value):
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("Invalid floating position")
+    if any(
+        isinstance(v, bool)
+        or not isinstance(v, (int, float))
+        or not math.isfinite(v)
+        or abs(v) > 1000000
+        for v in value
+    ):
+        raise ValueError("Invalid floating position")
+    return [int(v) for v in value]
+
+
+def clamped_position(position, size, area, padding=8):
+    x, y = validated_position(position)
+    ax, ay, aw, ah = area
+    w, h = size
+    return (
+        max(ax + padding, min(x, ax + max(padding, aw - w - padding))),
+        max(ay + padding, min(y, ay + max(padding, ah - h - padding))),
+    )
+
+
+def autostart_path():
+    return (
+        Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        / "autostart"
+        / "io.github.muhameho.Muisland.desktop"
+    )
+
+
+def set_autostart(enabled):
+    path = autostart_path()
+    if enabled:
+        # PATH is resolved by the desktop session; no shell or credential arguments.
+        binary = shutil.which("muisland")
+        if not binary:
+            candidate = Path.home() / ".local/bin/muisland"
+            binary = str(candidate) if candidate.is_file() else "muisland"
+        # A desktop Exec field has its own quoting rules, not shell syntax.
+        escaped = (
+            binary.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("`", "\\`")
+            .replace("$", "\\$")
+            .replace("%", "%%")
+        )
+        atomic(
+            path,
+            (
+                '[Desktop Entry]\nType=Application\nName=Muisland\nExec="'
+                + escaped
+                + '" --background\nIcon=io.github.muhameho.Muisland\nTerminal=false\nX-GNOME-Autostart-enabled=true\n'
+            ).encode(),
+        )
+    elif path.exists():
+        path.unlink()
+    return path.exists()

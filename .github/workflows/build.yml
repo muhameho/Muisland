@@ -19,15 +19,38 @@ jobs:
           name: Muisland-Windows-x64
           path: target/release/muisland.exe
   ubuntu:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Linux runtime and test dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3-gi python3-gi-cairo python3-cryptography gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libsecret-tools dbus-x11 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y python3-gi python3-gi-cairo python3-cryptography gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libsecret-tools gnome-keyring gir1.2-gtklayershell-0.1 dbus-x11 xvfb xauth sway desktop-file-utils
       - run: python3 -m unittest discover -s linux -v
+      - run: dbus-run-session -- bash linux/keyring_test.sh
       - run: bash build.sh --deb
+      - run: bash build.sh --tar
+      - run: bash linux/package-test.sh
+      - run: sudo dpkg -i dist/*.deb
+      - run: /usr/bin/muisland --version
+      - run: desktop-file-validate linux/muisland.desktop
+      - run: timeout 30s dbus-run-session -- xvfb-run -a bash linux/instance-test.sh
+      - run: dbus-run-session -- bash linux/wayland-test.sh
       - run: dbus-run-session -- xvfb-run -a ./target/release/muisland --preview --smoke-test
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Muisland-Ubuntu-x64
-          path: dist/*.deb
+          name: Muisland-${{ matrix.os }}-x64
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+
+  debian:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: docker build --build-arg DISTRO=debian:12 -f linux/Dockerfile.test -t muisland-debian .
+      - run: docker run --rm muisland-debian
+      - run: docker run --rm muisland-debian dbus-run-session -- bash linux/keyring_test.sh
+      - run: docker run --rm --user 65534:65534 --env HOME=/tmp/muisland-test muisland-debian dbus-run-session -- bash linux/wayland-test.sh
