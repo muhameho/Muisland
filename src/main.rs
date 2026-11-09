@@ -147,6 +147,7 @@ mod island {
         scale: f32,
         anchor: f32,
         top: i32,
+        float_position: (f32, i32),
         view: View,
         previous: Option<View>,
         transition: f32,
@@ -253,11 +254,35 @@ mod island {
         (x + pw as f32 / 2., y, fit)
     }
     fn constrain(s: &mut State) {
+        let (fw, fh) = if s.settings.circle {
+            (CIRCLE, CIRCLE)
+        } else {
+            (PILL_W, PILL_H)
+        };
+        let (fa, ft, _) = bounded_geometry(
+            &s.work_areas,
+            s.float_position.0,
+            s.float_position.1,
+            fw,
+            fh,
+            s.settings.float_scale,
+        );
+        s.float_position = (fa, ft);
+        // Menu fitting must never overwrite the preferred floating location.
+        let (desired_x, desired_y) = if s.open {
+            (s.anchor, s.top)
+        } else {
+            s.float_position
+        };
         let (anchor, top, scale) =
-            bounded_geometry(&s.work_areas, s.anchor, s.top, s.w, s.h, s.scale);
+            bounded_geometry(&s.work_areas, desired_x, desired_y, s.w, s.h, s.scale);
         s.anchor = anchor;
         s.top = top;
         s.scale = scale;
+    }
+    fn bubble_motion(progress: f32) -> (f32, f32, f32) {
+        let eased = 1. - (1. - progress.clamp(0., 1.)).powi(3);
+        (eased, 0.94 + 0.06 * eased, 8. * (1. - eased))
     }
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(Some(0)).collect()
@@ -1471,11 +1496,19 @@ mod island {
         ) else {
             return;
         };
-        if let Some(output) = render_bubble(s, p.scale, p.right, p.tail) {
+        let (opacity, zoom, slide) = bubble_motion(s.bubble_alpha);
+        if let Some(output) = render_bubble(s, p.scale * zoom, p.right, p.tail) {
+            let slide = (slide * p.scale).round() as i32;
+            let x = if p.right {
+                p.x + slide
+            } else {
+                p.x + (BUBBLE_W * p.scale).round() as i32 - output.w - slide
+            };
+            let y = p.y + ((BUBBLE_H * p.scale).round() as i32 - output.h) / 2;
             UpdateLayeredWindow(
                 s.bubble,
                 null_mut(),
-                &POINT { x: p.x, y: p.y },
+                &POINT { x, y },
                 &SIZE {
                     cx: output.w,
                     cy: output.h,
@@ -1486,7 +1519,7 @@ mod island {
                 &BLENDFUNCTION {
                     BlendOp: AC_SRC_OVER as u8,
                     BlendFlags: 0,
-                    SourceConstantAlpha: (s.bubble_alpha * 255.) as u8,
+                    SourceConstantAlpha: (opacity * 255.) as u8,
                     AlphaFormat: AC_SRC_ALPHA as u8,
                 },
                 ULW_ALPHA,
@@ -2241,7 +2274,11 @@ mod island {
                 s.bubble_alpha = if s.settings.reduced_motion {
                     bubble_target
                 } else {
-                    s.bubble_alpha + (bubble_target - s.bubble_alpha) * (dt * 20.).min(1.)
+                    if bubble_target > s.bubble_alpha {
+                        (s.bubble_alpha + dt / 0.24).min(1.)
+                    } else {
+                        (s.bubble_alpha - dt / 0.18).max(0.)
+                    }
                 };
                 if (s.bubble_alpha - bubble_target).abs() < 0.005 {
                     s.bubble_alpha = bubble_target;
@@ -2472,6 +2509,7 @@ mod island {
                         GetCursorPos(&mut p);
                         s.anchor = (p.x - s.origin.0) as f32 + s.w * s.scale / 2.;
                         s.top = p.y - s.origin.1;
+                        s.float_position = (s.anchor, s.top);
                         constrain(s);
                         InvalidateRect(hwnd, null_mut(), 0);
                     }
@@ -2636,6 +2674,7 @@ mod island {
             scale,
             anchor,
             top,
+            float_position: (anchor, top),
             view: View::Home,
             previous: None,
             transition: 1.,
@@ -2761,6 +2800,59 @@ mod island {
     #[cfg(test)]
     mod tests {
         use super::*;
+        #[test]
+        fn opening_and_closing_menu_preserves_floating_position_at_edges() {
+            let mut s = initial(true, 46., 8);
+            s.settings.circle = true;
+            s.settings.float_scale = 1.;
+            s.work_areas = vec![RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1040,
+            }];
+            for home in [(46., 8), (1874., 8), (46., 956), (1874., 956)] {
+                s.float_position = home;
+                s.anchor = home.0;
+                s.top = home.1;
+                s.scale = 1.;
+                s.open = true;
+                s.w = EW;
+                s.h = EH;
+                constrain(&mut s);
+                assert_eq!(s.float_position, home);
+                assert_ne!((s.anchor, s.top), home);
+                collapse(&mut s);
+                // Clamping while the window is still large must not lose home.
+                constrain(&mut s);
+                assert_eq!(s.float_position, home);
+                s.w = CIRCLE;
+                s.h = CIRCLE;
+                constrain(&mut s);
+                assert_eq!((s.anchor, s.top), home);
+                // Repeated cycles must not accumulate a position shift.
+                s.open = true;
+                s.w = EW;
+                s.h = EH;
+                constrain(&mut s);
+                collapse(&mut s);
+                s.w = CIRCLE;
+                s.h = CIRCLE;
+                constrain(&mut s);
+                assert_eq!((s.anchor, s.top), home);
+            }
+        }
+        #[test]
+        fn hover_animation_fades_scales_and_slides_to_exact_final_geometry() {
+            let start = bubble_motion(0.);
+            let mid = bubble_motion(0.5);
+            let end = bubble_motion(1.);
+            assert_eq!(start, (0., 0.94, 8.));
+            assert_eq!(end, (1., 1., 0.));
+            assert!(mid.0 > start.0 && mid.0 < end.0);
+            assert!(mid.1 > start.1 && mid.1 < end.1);
+            assert!(mid.2 < start.2 && mid.2 > end.2);
+        }
         #[test]
         fn hover_bubble_fits_all_corners_without_moving_circle() {
             for area in [
