@@ -91,6 +91,8 @@ mod island {
         Smaller,
         FloatSmaller,
         FloatLarger,
+        BubbleSmaller,
+        BubbleLarger,
         Remove,
         RemoveConfirm,
         Larger,
@@ -483,12 +485,14 @@ mod island {
                 add(Action::Larger, 352, 126, 38, 36);
                 add(Action::FloatSmaller, 264, 178, 38, 36);
                 add(Action::FloatLarger, 352, 178, 38, 36);
-                add(Action::Circle, 24, 232, 372, 48);
-                add(Action::Motion, 24, 290, 372, 48);
-                add(Action::Rollback, 24, 350, 372, 36);
-                add(Action::Recover, 24, 394, 372, 36);
-                add(Action::Back, 24, 448, 170, 40);
-                add(Action::Quit, 206, 448, 190, 40);
+                add(Action::BubbleSmaller, 264, 230, 38, 36);
+                add(Action::BubbleLarger, 352, 230, 38, 36);
+                add(Action::Circle, 24, 280, 372, 48);
+                add(Action::Motion, 24, 334, 372, 48);
+                add(Action::Rollback, 24, 390, 372, 30);
+                add(Action::Recover, 24, 428, 372, 30);
+                add(Action::Back, 24, 466, 170, 34);
+                add(Action::Quit, 206, 466, 190, 34);
             }
             View::Remove(_, _) => {
                 add(Action::Cancel, 24, 312, 120, 42);
@@ -973,11 +977,24 @@ mod island {
                     44,
                 );
                 button(dc, s, Action::FloatLarger, 352, 178, 38, 36, "+", false);
+                text(dc, 26, 241, 13, 600, "Hover bubble size", WHITE, 220);
+                button(dc, s, Action::BubbleSmaller, 264, 230, 38, 36, "−", false);
+                text(
+                    dc,
+                    308,
+                    241,
+                    12,
+                    600,
+                    &format!("{}%", (s.settings.bubble_scale * 100.).round() as i32),
+                    WHITE,
+                    44,
+                );
+                button(dc, s, Action::BubbleLarger, 352, 230, 38, 36, "+", false);
                 toggle(
                     dc,
                     s,
                     Action::Circle,
-                    232,
+                    280,
                     "Circle with usage ring",
                     s.settings.circle,
                 );
@@ -985,7 +1002,7 @@ mod island {
                     dc,
                     s,
                     Action::Motion,
-                    290,
+                    334,
                     "Reduce motion",
                     s.settings.reduced_motion,
                 );
@@ -994,9 +1011,9 @@ mod island {
                     s,
                     Action::Rollback,
                     24,
-                    350,
+                    390,
                     372,
-                    36,
+                    30,
                     "Restore previous sign-in",
                     false,
                 );
@@ -1005,21 +1022,21 @@ mod island {
                     s,
                     Action::Recover,
                     24,
-                    394,
+                    428,
                     372,
-                    36,
+                    30,
                     "Recover local backup to folder",
                     false,
                 );
-                button(dc, s, Action::Back, 24, 448, 170, 40, "Back", false);
+                button(dc, s, Action::Back, 24, 466, 170, 34, "Back", false);
                 button(
                     dc,
                     s,
                     Action::Quit,
                     206,
-                    448,
+                    466,
                     190,
-                    40,
+                    34,
                     "Quit Muisland",
                     false,
                 );
@@ -1492,7 +1509,7 @@ mod island {
             s.anchor,
             s.top,
             s.w * s.scale,
-            s.settings.float_scale,
+            s.settings.bubble_scale,
         ) else {
             return;
         };
@@ -2075,6 +2092,14 @@ mod island {
             Action::Larger => {
                 s.settings.menu_scale = (s.settings.menu_scale + 0.1).min(1.6);
                 persist(s)
+            }
+            Action::BubbleSmaller => {
+                s.settings.bubble_scale = (s.settings.bubble_scale - 0.1).max(0.85);
+                persist(s);
+            }
+            Action::BubbleLarger => {
+                s.settings.bubble_scale = (s.settings.bubble_scale + 0.1).min(1.6);
+                persist(s);
             }
             Action::FloatSmaller => {
                 s.settings.float_scale = (s.settings.float_scale - 0.1).max(0.6);
@@ -2995,8 +3020,21 @@ mod island {
             s.transition = 1.;
             assert_eq!(hit(&s, 371, 144), Action::Larger);
             assert_eq!(hit(&s, 371, 196), Action::FloatLarger);
+            assert_eq!(hit(&s, 371, 248), Action::BubbleLarger);
             s.settings.menu_scale = 1.4;
-            assert_eq!(s.settings.float_scale, 1.0);
+            s.settings.float_scale = 0.6;
+            assert_eq!(s.settings.bubble_scale, 1.0);
+            let area = RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080,
+            };
+            for diameter in [46., 76., 137.] {
+                let p = bubble_placement(&[area], 400., 200, diameter, s.settings.bubble_scale)
+                    .unwrap();
+                assert_eq!(p.scale, 1.0);
+            }
         }
         #[test]
         fn page_navigation_uses_only_the_short_fade() {

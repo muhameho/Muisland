@@ -24,6 +24,7 @@ pub struct Settings {
     pub protect_local: bool,
     pub menu_scale: f32,
     pub float_scale: f32,
+    pub bubble_scale: f32,
     pub circle: bool,
     pub reduced_motion: bool,
 }
@@ -40,6 +41,7 @@ impl Default for Settings {
             protect_local: false,
             menu_scale: 1.0,
             float_scale: 1.0,
+            bubble_scale: 1.0,
             circle: false,
             reduced_motion: false,
         }
@@ -91,6 +93,11 @@ impl Settings {
             .filter(|n| n.is_finite())
             .unwrap_or(legacy)
             .clamp(0.60, 1.8) as f32;
+        result.bubble_scale = v["bubble_scale"]
+            .as_f64()
+            .filter(|n| n.is_finite())
+            .unwrap_or(1.0)
+            .clamp(0.85, 1.6) as f32;
         result.circle = v["circle"].as_bool().unwrap_or(false);
         result.reduced_motion = v["reduced_motion"].as_bool().unwrap_or(false);
         result
@@ -114,7 +121,7 @@ impl Settings {
             .iter()
             .map(|a| json!({"slot":a.slot,"name": a.name, "usage": a.usage.as_ref().map(Usage::to_cache)}))
             .collect();
-        let data = serde_json::to_vec(&json!({"version":1,"accounts":accounts,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})).map_err(io::Error::other)?;
+        let data = serde_json::to_vec(&json!({"version":1,"accounts":accounts,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})).map_err(io::Error::other)?;
         profiles::write_atomic(
             &profiles::base()?.join("muisland-settings.bin"),
             &profiles::dpapi(&data, true)?,
@@ -162,9 +169,26 @@ mod tests {
         assert_eq!(settings.accounts[3].name, "Four");
         assert_eq!(settings.menu_scale, 1.6);
         assert_eq!(settings.float_scale, 1.8);
+        assert_eq!(settings.bubble_scale, 1.0);
         assert!(settings.circle);
         assert_eq!(settings.add_account(), Some(4));
         assert_eq!(settings.accounts[4].name, "Account 5");
+    }
+    #[test]
+    fn bubble_size_is_independent_and_old_preferences_default_to_readable_size() {
+        let old = Settings::from_value(&json!({"float_scale":0.6,"scale":0.6}));
+        assert_eq!(old.bubble_scale, 1.0);
+        let custom = Settings::from_value(&json!({"float_scale":0.6,"bubble_scale":1.3}));
+        assert_eq!(custom.float_scale, 0.6);
+        assert_eq!(custom.bubble_scale, 1.3);
+        assert_eq!(
+            Settings::from_value(&json!({"bubble_scale":0.1})).bubble_scale,
+            0.85
+        );
+        assert_eq!(
+            Settings::from_value(&json!({"bubble_scale":20})).bubble_scale,
+            1.6
+        );
     }
     #[test]
     fn removal_keeps_other_storage_slots_and_empty_lists_stay_empty() {

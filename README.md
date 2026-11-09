@@ -97,3 +97,5 @@ The collapsed pill/circle can be dragged. The circle stays fixed during hover; a
 Clicking outside closes the open menu or hover card. Dismissal abandons pending, unconfirmed switches, does not auto-save unfinished account-name edits, and does not execute confirmations. Previously confirmed background operations finish safely, but their completion does not reopen a dismissed menu. Focus deactivation handles ordinary clicks; a mouse-state check covers outside clicks on non-activating surfaces. The app does not install a global input hook or log external clicks.
 
 The floating location is stored separately from the menu geometry: opening near an edge may fit the menu inward, but closing restores the original circle/pill position. Explicit dragging updates the preferred floating location. The usage bubble uses a short eased fade, scale, and slide; Reduce motion displays it immediately.
+
+Hover bubble size is independent of the floating circle/pill and menu sizes. It defaults to 100% for existing settings even when the circle is small, and can be adjusted from 85% to 160% in Preferences. It only fits smaller automatically when the monitor has insufficient room.
