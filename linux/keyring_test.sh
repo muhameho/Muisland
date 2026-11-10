@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs only inside a fresh test DBus session; uses no real accounts.
 set -euo pipefail
+mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}"
 export XDG_DATA_HOME="$(mktemp -d)" XDG_CONFIG_HOME="$(mktemp -d)"
 trap 'rm -rf -- "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"' EXIT
 printf 'muisland-disposable-test-keyring' | gnome-keyring-daemon --unlock --components=secrets

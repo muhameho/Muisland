@@ -7,7 +7,7 @@ RUN bash /app/linux/dependencies.sh --install
 RUN . /etc/os-release && case "$ID" in \
     fedora) dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon sway tar gzip coreutils dejavu-sans-fonts ;; \
     arch) pacman -S --needed --noconfirm xorg-server-xvfb xorg-xauth dbus sway tar gzip ttf-dejavu ;; \
-    opensuse-tumbleweed) zypper --non-interactive install xorg-x11-server-Xvfb xauth dbus-1 sway tar gzip dejavu-fonts ;; \
+    opensuse-tumbleweed) zypper --non-interactive install xorg-x11-server-Xvfb xauth dbus-1 dbus-1-tools sway tar gzip dejavu-fonts ;; \
     alpine) apk add xvfb xauth dbus sway font-dejavu ;; \
     *) exit 1 ;; esac
 COPY Cargo.toml README.md ./
