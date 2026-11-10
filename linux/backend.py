@@ -712,6 +712,7 @@ def claude_local_usage(newer_than=0, expected_account=None):
         "plan": "Claude",
         "updated": stamp,
         "local": True,
+        "verified_local": expected_account is not None,
     }
     return result if result["session"] or result["weekly"] else None
 
@@ -1039,6 +1040,15 @@ class Service:
         if not preview and self.vault.exists("settings.bin"):
             self.settings.update(self.vault.read_json("settings.bin"))
         if not preview:
+            for provider in ("claude", "codex"):
+                for row in self.settings[provider]:
+                    usage = row.get("usage")
+                    if (
+                        isinstance(usage, dict)
+                        and usage.get("local")
+                        and not usage.get("verified_local")
+                    ):
+                        row["usage"] = None
             self.vault.cipher()
         if preview:
             for provider in ("claude", "codex"):
@@ -1417,6 +1427,22 @@ class Service:
                     if action == "save" and row.get("identity") != expected
                     else None
                 )
+                if action == "switch":
+                    target_profile = self.vault.read_json(
+                        self.snapshot_name(p, row["slot"])
+                    )
+                    has_oauth = any(
+                        target_profile.get("config", {}).get(field)
+                        for field in AUTH_KEYS[:2]
+                    )
+                    has_cookie = any(
+                        name in target_profile.get("files", {})
+                        for name in ("Cookies", "Network/Cookies")
+                    )
+                    if not has_oauth and not has_cookie:
+                        raise ValueError(
+                            "This older saved profile is missing its browser session. Sign in to that account and Save it again with this version. The current Claude session was kept unchanged."
+                        )
                 was_running = bool(claude_processes())
                 close_claude()
                 try:

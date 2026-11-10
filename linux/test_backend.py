@@ -692,6 +692,38 @@ class LinuxBackendTests(unittest.TestCase):
         with patch.dict(os.environ, {"MUISLAND_CLAUDE_PASSWORD_STORE": "default"}):
             self.assertEqual(backend.claude_launch_arguments(), [])
 
+    def test_unverified_old_local_cache_is_not_shown_as_this_accounts_usage(self):
+        service = backend.Service(vault=self.vault, network=False)
+        service.settings["claude"] = [
+            {
+                "slot": 1,
+                "name": "Old",
+                "identity": "first",
+                "draft": False,
+                "usage": {"local": True, "session": {"used": 99}},
+            }
+        ]
+        service.persist()
+        loaded = backend.Service(vault=self.vault, network=False)
+        self.assertIsNone(loaded.settings["claude"][0]["usage"])
+
+    def test_missing_old_session_is_rejected_before_closing_claude(self):
+        home = self.claude_home("first")
+        service = backend.Service(vault=self.vault, network=False)
+        service.settings["claude"] = [
+            {"slot": 1, "identity": "second", "name": "Other", "draft": False}
+        ]
+        self.vault.write_json(
+            "claude/account-1.bin",
+            {"config": {"lastKnownAccountUuid": "second"}, "files": {}},
+        )
+        with patch.object(backend, "claude_dir", return_value=home), patch.object(
+            backend, "claude_executable", return_value="claude-desktop"
+        ), patch.object(backend, "close_claude") as close:
+            with self.assertRaisesRegex(ValueError, "missing its browser session"):
+                service.handle("switch", {"slot": 1, "confirmed": True})
+            close.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
