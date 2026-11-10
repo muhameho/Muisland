@@ -424,6 +424,43 @@ mod island {
         SelectObject(dc, old);
         DeleteObject(font);
     }
+    unsafe fn status_paragraph(dc: Dc, label: &str, color: u32) {
+        let font = CreateFontW(
+            -24,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            0,
+            0,
+            ANTIALIASED_QUALITY as u32,
+            0,
+            wide("Segoe UI Variable Display").as_ptr(),
+        );
+        let old = SelectObject(dc, font);
+        SetBkMode(dc, TRANSPARENT as i32);
+        SetTextColor(dc, color);
+        let mut bounds = RECT {
+            left: 40 * 2,
+            top: 570 * 2,
+            right: 380 * 2,
+            bottom: 606 * 2,
+        };
+        let mut chars: Vec<u16> = label.encode_utf16().collect();
+        DrawTextW(
+            dc,
+            chars.as_mut_ptr(),
+            chars.len() as i32,
+            &mut bounds,
+            DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS,
+        );
+        SelectObject(dc, old);
+        DeleteObject(font);
+    }
     unsafe fn line(dc: Dc, pts: &[(i32, i32)], width: i32, color: u32) {
         let pen = CreatePen(PS_SOLID, width * 2, color);
         let old = SelectObject(dc, pen);
@@ -1719,30 +1756,116 @@ mod island {
                             }
                         }
                     };
-                    text(
-                        source.dc,
-                        25,
-                        EH as i32 - 30,
-                        11,
-                        400,
-                        &format!(
-                            "Muisland {} · {}",
-                            env!("CARGO_PKG_VERSION"),
-                            if matches!(s.view, View::Preferences) && s.status.is_empty() {
-                                if s.preview {
-                                    "Preview · sample data"
-                                } else if s.settings.provider == 1 {
-                                    "Codex · automatic usage"
+                    if matches!(s.view, View::Home) {
+                        panel(
+                            source.dc,
+                            24,
+                            534,
+                            372,
+                            78,
+                            16,
+                            mix(bg(), panel_color(), 0.65),
+                        );
+                        let foreground = if s.error { 0x009BA7F0 } else { white() };
+                        let provider = if s.settings.provider == 1 {
+                            "Codex"
+                        } else {
+                            "Claude"
+                        };
+                        let title = if s.error {
+                            "Needs attention"
+                        } else if s.worker.is_some() {
+                            "Updating your account…"
+                        } else if s.sync.is_some() {
+                            "Checking account status…"
+                        } else if !s.status.is_empty() {
+                            "Account status"
+                        } else if s.preview {
+                            "Preview · sample data"
+                        } else if !s.network_allowed {
+                            "Usage updates paused"
+                        } else {
+                            "Automatic usage updates"
+                        };
+                        text(source.dc, 40, 546, 13, 600, title, foreground, 276);
+                        text(
+                            source.dc,
+                            336,
+                            548,
+                            11,
+                            400,
+                            &format!("v{}", env!("CARGO_PKG_VERSION")),
+                            muted(),
+                            48,
+                        );
+                        if !s.status.is_empty() || s.worker.is_some() || s.sync.is_some() {
+                            status_paragraph(
+                                source.dc,
+                                status,
+                                if s.error {
+                                    foreground
                                 } else {
-                                    "Claude · automatic usage"
+                                    mix(muted(), white(), 0.30)
+                                },
+                            );
+                        } else if s.preview || !s.network_allowed {
+                            status_paragraph(
+                                source.dc,
+                                if s.preview {
+                                    "Illustrative values only. No accounts are connected."
+                                } else {
+                                    "Network access is disabled for this test session."
+                                },
+                                mix(muted(), white(), 0.30),
+                            );
+                        } else {
+                            text(
+                                source.dc,
+                                40,
+                                570,
+                                12,
+                                400,
+                                &format!("{} · active account every 30 seconds", provider),
+                                mix(muted(), white(), 0.30),
+                                340,
+                            );
+                            text(
+                                source.dc,
+                                40,
+                                589,
+                                12,
+                                400,
+                                "Other saved accounts every 2 minutes",
+                                mix(muted(), white(), 0.30),
+                                340,
+                            );
+                        }
+                    } else {
+                        text(
+                            source.dc,
+                            25,
+                            EH as i32 - 30,
+                            11,
+                            400,
+                            &format!(
+                                "Muisland {} · {}",
+                                env!("CARGO_PKG_VERSION"),
+                                if matches!(s.view, View::Preferences) && s.status.is_empty() {
+                                    if s.preview {
+                                        "Preview · sample data"
+                                    } else if s.settings.provider == 1 {
+                                        "Codex · automatic usage"
+                                    } else {
+                                        "Claude · automatic usage"
+                                    }
+                                } else {
+                                    status
                                 }
-                            } else {
-                                status
-                            }
-                        ),
-                        if s.error { 0x009BA7F0 } else { muted() },
-                        370,
-                    );
+                            ),
+                            if s.error { 0x009BA7F0 } else { muted() },
+                            370,
+                        );
+                    }
                 }
             }
         }
@@ -2067,6 +2190,7 @@ mod island {
             "circle-hover-left",
             "three-accounts",
             "small-size",
+            "usage-updates",
         ] {
             s.open = true;
             s.w = EW;
@@ -2087,6 +2211,9 @@ mod island {
                 "circle-hover" | "circle-hover-left"=>{s.open=false;s.settings.circle=true;s.w=CIRCLE;s.h=CIRCLE;s.peek=true;},
                 "three-accounts"=>{s.settings.add_account();refresh_slots(&mut s);s.page=1;},
                 "small-size"=>{s.page=0;s.scale=0.75;},
+                // Export is synchronous: these flags only select the painted state,
+                // and do not start timers, read credentials, or request usage.
+                "usage-updates"=>{s.page=0;s.preview=false;s.network_allowed=true;},
                 _=>{},
             }
             let surface = unsafe {
