@@ -31,6 +31,14 @@ pub struct Settings {
     pub bubble_scale: f32,
     pub circle: bool,
     pub reduced_motion: bool,
+    pub bubble_style: usize,
+    pub bubble_density: usize,
+    pub circle_numbers: bool,
+    pub usage_alerts: bool,
+    pub session_threshold: f32,
+    pub weekly_threshold: f32,
+    pub auto_switch: bool,
+    pub pause_for_work: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -52,6 +60,14 @@ impl Default for Settings {
             bubble_scale: 1.0,
             circle: false,
             reduced_motion: false,
+            bubble_style: 2,
+            bubble_density: 0,
+            circle_numbers: false,
+            usage_alerts: false,
+            session_threshold: 0.8,
+            weekly_threshold: 0.8,
+            auto_switch: false,
+            pause_for_work: true,
         }
     }
 }
@@ -117,6 +133,22 @@ impl Settings {
             .unwrap_or(1.0)
             .clamp(0.85, 1.6) as f32;
         result.circle = v["circle"].as_bool().unwrap_or(false);
+        result.bubble_style = v["bubble_style"].as_u64().unwrap_or(2).min(2) as usize;
+        result.bubble_density = v["bubble_density"].as_u64().unwrap_or(0).min(2) as usize;
+        result.circle_numbers = v["circle_numbers"].as_bool().unwrap_or(false);
+        result.usage_alerts = v["usage_alerts"].as_bool().unwrap_or(false);
+        result.session_threshold = v["session_threshold"]
+            .as_f64()
+            .filter(|n| n.is_finite())
+            .unwrap_or(0.8)
+            .clamp(0.05, 1.0) as f32;
+        result.weekly_threshold = v["weekly_threshold"]
+            .as_f64()
+            .filter(|n| n.is_finite())
+            .unwrap_or(0.8)
+            .clamp(0.05, 1.0) as f32;
+        result.auto_switch = v["auto_switch"].as_bool().unwrap_or(false);
+        result.pause_for_work = v["pause_for_work"].as_bool().unwrap_or(true);
         result.reduced_motion = v["reduced_motion"].as_bool().unwrap_or(false);
         result
     }
@@ -143,7 +175,7 @@ impl Settings {
         } else {
             (&self.other_accounts, &self.accounts)
         };
-        json!({"version":2,"accounts":rows(claude),"codex_accounts":rows(codex),"provider":self.provider,"theme":self.theme,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion})
+        json!({"version":2,"accounts":rows(claude),"codex_accounts":rows(codex),"provider":self.provider,"theme":self.theme,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion,"bubble_style":self.bubble_style,"bubble_density":self.bubble_density,"circle_numbers":self.circle_numbers,"usage_alerts":self.usage_alerts,"session_threshold":self.session_threshold,"weekly_threshold":self.weekly_threshold,"auto_switch":self.auto_switch,"pause_for_work":self.pause_for_work})
     }
     pub fn select_provider(&mut self, provider: usize) {
         let provider = provider.min(1);

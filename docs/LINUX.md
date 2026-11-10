@@ -9,7 +9,7 @@ Muisland runs as a desktop application on Linux, with the same Claude/Codex prof
 Download the `.deb` for your architecture and Ubuntu baseline from [the build artifacts](https://github.com/muhameho/Muisland/actions/workflows/build.yml), extract the artifact ZIP, then run:
 
 ```bash
-sudo apt install ./muisland_0.5.5_amd64.deb
+sudo apt install ./muisland_0.6.0_amd64.deb
 ```
 
 Open **Muisland** in your application launcher. Installing with `apt` resolves runtime dependencies. An unlocked desktop Secret Service keyring (GNOME Keyring, or an equivalent provider) is required for encrypted profiles. Installing a keyring package does not silently unlock or migrate an existing keyring.
@@ -41,7 +41,7 @@ sudo apt install python3 python3-gi python3-gi-cairo python3-cryptography \
 
 Other distributions need Python 3.10+, PyGObject with Cairo, GTK 3, WebKitGTK 4.1 (4.0 also accepted by the runtime), Python cryptography, libsecret's `secret-tool`, and a desktop Secret Service provider. Native layer-shell desktops additionally need the GTK Layer Shell introspection typelib. Distribution package names differ; the Ubuntu package cannot be installed with Fedora/Arch package managers. Use **linux-any** on those families. The compiled x86-64 archive remains available for glibc systems; **linux-any** is the option for musl systems such as Alpine.
 
-Extract `muisland-0.5.5-linux-any.tar.gz`, open a terminal in its folder, then:
+Extract `muisland-0.6.0-linux-any.tar.gz`, open a terminal in its folder, then:
 
 ```bash
 ./muisland --check-env

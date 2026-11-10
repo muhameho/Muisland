@@ -386,7 +386,12 @@ class Shell:
 
     def push(self):
         try:
+            self.service.check_limits()
             state = self.service.state()
+            alert = state.get("usage_alert")
+            if alert and alert["id"] != getattr(self, "shown_usage_alert", None):
+                self.shown_usage_alert = alert["id"]
+                self.show_menu()
             state["version"] = globals().get("MUISLAND_VERSION", "development")
             state["desktop"] = {
                 "autostart": autostart_path().exists(),
@@ -661,6 +666,7 @@ class Shell:
         self.push()
 
     def close_menu(self):
+        self.service.usage_alert = None
         if not self.open:
             return
         self.open = False

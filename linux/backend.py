@@ -1018,6 +1018,8 @@ class Service:
         self.network = network
         self.lock = threading.RLock()
         self.busy = False
+        self.usage_alert = None
+        self.alerted = set()
         self.errors = {}
         self.next_poll = {}
         self.failures = {}
@@ -1032,6 +1034,14 @@ class Service:
             "bubble_scale": 1.0,
             "circle": True,
             "reduced_motion": False,
+            "bubble_style": 2,
+            "bubble_density": 0,
+            "circle_numbers": False,
+            "usage_alerts": False,
+            "session_threshold": 0.8,
+            "weekly_threshold": 0.8,
+            "auto_switch": False,
+            "pause_for_work": True,
             "protect_local": False,
             "position": [100, 80],
             "claude": [],
@@ -1128,6 +1138,11 @@ class Service:
                     if k not in ("claude", "codex")
                 },
                 "busy": self.busy,
+                "usage_alert": (
+                    {k: v for k, v in self.usage_alert.items() if k != "source"}
+                    if self.usage_alert
+                    else None
+                ),
                 "preview": self.preview,
             }
 
@@ -1276,9 +1291,144 @@ class Service:
                         else:
                             self.errors[key] = message
 
+    def quota_hit(self, row):
+        u = row.get("usage") or {}
+        now = time.time()
+        if now - u.get("updated", 0) > 90:
+            return False
+        return any(
+            (u.get(k) or {}).get("used", -1) >= self.settings[t] * 100
+            and ((u.get(k) or {}).get("resets") or now + 1) > now
+            for k, t in (
+                ("session", "session_threshold"),
+                ("weekly", "weekly_threshold"),
+            )
+        )
+
+    def auto_candidate(self):
+        p = self.settings["provider"]
+        current = self.current(p)
+        rows = self.state()["accounts"]
+        source = next((a for a in rows if a["active"]), None)
+        if not source or not self.quota_hit(source) or source.get("error"):
+            return None
+        valid = []
+        for a in rows:
+            u = a.get("usage") or {}
+            if (
+                a["active"]
+                or not a["saved"]
+                or a.get("draft")
+                or a.get("error")
+                or time.time() - u.get("updated", 0) > 300
+            ):
+                continue
+            windows = [u.get(k) for k in ("session", "weekly")]
+            if not all(
+                w
+                and 0 <= w.get("used", -1) < self.settings[t] * 100
+                and (w.get("resets") or time.time() + 1) > time.time()
+                for w, t in zip(windows, ("session_threshold", "weekly_threshold"))
+            ):
+                continue
+            identity = next(
+                (x.get("identity") for x in self.settings[p] if x["slot"] == a["slot"]),
+                None,
+            )
+            if identity and identity != current:
+                valid.append(a)
+        return min(
+            valid,
+            key=lambda a: max(
+                a["usage"]["session"]["used"], a["usage"]["weekly"]["used"]
+            ),
+            default=None,
+        )
+
+    def check_limits(self):
+        with self.lock:
+            if (
+                self.busy
+                or self.usage_alert
+                or not (self.settings["usage_alerts"] or self.settings["auto_switch"])
+            ):
+                return
+            p = self.settings["provider"]
+            source = next((a for a in self.state()["accounts"] if a["active"]), None)
+            if not source:
+                return
+            key = (p, source["slot"])
+            if not self.quota_hit(source):
+                self.alerted.discard(key)
+                return
+            if key in self.alerted or source.get("error"):
+                return
+            self.alerted.add(key)
+            target = self.auto_candidate() if self.settings["auto_switch"] else None
+            may_work = p == "codex" or (not self.preview and bool(claude_processes()))
+            self.usage_alert = {
+                "id": str(time.time_ns()),
+                "provider": p,
+                "source": self.current(p),
+                "slot": target["slot"] if target else None,
+                "name": target["name"] if target else "",
+                "due": (
+                    time.time() + 15
+                    if target and not (self.settings["pause_for_work"] and may_work)
+                    else None
+                ),
+                "warning": (
+                    "Open projects and unsaved work may stop. Idle detection is not guaranteed."
+                    if target
+                    else (
+                        "Usage threshold reached. No account with fresh, lower usage is available."
+                        if self.settings["auto_switch"]
+                        else "Your account reached a configured usage threshold."
+                    )
+                ),
+            }
+
     def handle(self, action, data=None):
         data = data or {}
         with self.lock:
+            p = self.settings["provider"]
+            if action == "auto_cancel":
+                self.usage_alert = None
+                return self.state()
+            if action == "auto_execute":
+                alert = self.usage_alert
+                if (
+                    not alert
+                    or alert.get("provider") != p
+                    or alert.get("id") != data.get("id")
+                ):
+                    raise ValueError("Auto-switch was cancelled or changed")
+                if not data.get("confirmed") and (
+                    not alert.get("due") or time.time() < alert["due"]
+                ):
+                    raise ValueError("Review the open-work warning before switching")
+                target = self.auto_candidate()
+                if (
+                    self.current(p) != alert.get("source")
+                    or not target
+                    or target["slot"] != alert.get("slot")
+                ):
+                    self.usage_alert = None
+                    raise ValueError(
+                        "Account or usage state changed. Auto-switch cancelled."
+                    )
+                self.usage_alert = None
+                action = "switch"
+                data = {"provider": p, "slot": target["slot"], "confirmed": True}
+            if action in (
+                "provider",
+                "switch",
+                "save",
+                "discard",
+                "remove",
+                "rollback",
+            ):
+                self.usage_alert = None
             if action == "state":
                 return self.state()
             if action == "position":
@@ -1314,12 +1464,36 @@ class Service:
                     ("menu_scale", 0.75, 1.6),
                     ("float_scale", 0.6, 1.8),
                     ("bubble_scale", 0.85, 1.6),
+                    ("session_threshold", 0.05, 1.0),
+                    ("weekly_threshold", 0.05, 1.0),
                 ]:
                     if key in data:
                         self.settings[key] = max(lo, min(hi, float(data[key])))
-                for key in ("circle", "reduced_motion", "protect_local"):
+                for key in (
+                    "circle",
+                    "reduced_motion",
+                    "protect_local",
+                    "circle_numbers",
+                    "usage_alerts",
+                    "auto_switch",
+                    "pause_for_work",
+                ):
                     if key in data:
                         self.settings[key] = bool(data[key])
+                for key in ("bubble_style", "bubble_density"):
+                    if key in data:
+                        self.settings[key] = max(0, min(2, int(data[key])))
+                if any(
+                    k in data
+                    for k in (
+                        "usage_alerts",
+                        "auto_switch",
+                        "session_threshold",
+                        "weekly_threshold",
+                    )
+                ):
+                    self.alerted.clear()
+                self.usage_alert = None
                 if "theme" in data:
                     self.settings["theme"] = int(data["theme"]) % 4
                 self.persist()

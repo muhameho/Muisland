@@ -141,6 +141,7 @@ mod island {
         Confirm(Op),
         SwitchConfirm(usize),
         Remove(usize, String),
+        AutoSwitch(usize),
     }
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
     enum Action {
@@ -153,6 +154,14 @@ mod island {
         MenuSlider,
         FloatSlider,
         BubbleSlider,
+        BubbleStyle,
+        BubbleDensity,
+        CircleNumbers,
+        UsageAlerts,
+        SessionThreshold,
+        WeeklyThreshold,
+        AutoSwitch,
+        PauseForWork,
         Back,
         Details(usize),
         Save(usize),
@@ -212,6 +221,7 @@ mod island {
         peek_until: f32,
         bubble: HWND,
         bubble_alpha: f32,
+        bubble_detail: f32,
         w: f32,
         h: f32,
         vw: f32,
@@ -234,6 +244,13 @@ mod island {
         slider_drag: Option<Action>,
         slider_preview: Option<f32>,
         prefs_scroll: i32,
+        hover_since: f32,
+        pulse_until: f32,
+        toast_until: f32,
+        ring_session: Option<f64>,
+        ring_weekly: Option<f64>,
+        auto_due: Option<f32>,
+        alerted: std::collections::HashSet<(usize, usize)>,
         mouse_was_down: bool,
         origin: (i32, i32),
         edit: Vec<u16>,
@@ -542,7 +559,7 @@ mod island {
             color,
         );
     }
-    unsafe fn ring(dc: Dc, cx: f32, cy: f32, r: f32, used: Option<f64>) {
+    unsafe fn ring_color(dc: Dc, cx: f32, cy: f32, r: f32, used: Option<f64>, base_color: u32) {
         // Analytic coverage avoids polygon steps in the small circular meter.
         GdiFlush();
         let object = GetCurrentObject(dc, OBJ_BITMAP as u32);
@@ -572,17 +589,17 @@ mod island {
         } else if used.unwrap_or(0.) >= 70. {
             0x009FC5F2
         } else {
-            accent()
+            base_color
         };
         for y in ((cy - r - 5.) as i32).max(0)..((cy + r + 5.) as i32).min(height) {
             for x in ((cx - r - 5.) as i32).max(0)..((cx + r + 5.) as i32).min(width) {
                 let dx = x as f32 + 0.5 - cx;
                 let dy = y as f32 + 0.5 - cy;
-                let coverage = (3.5 - (dx.hypot(dy) - r).abs()).clamp(0., 1.);
+                let coverage = (2.5 - (dx.hypot(dy) - r).abs()).clamp(0., 1.);
                 let phase = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU;
-                let cap = (3.5 - (x as f32 + 0.5 - endx).hypot(y as f32 + 0.5 - endy))
+                let cap = (2.5 - (x as f32 + 0.5 - endx).hypot(y as f32 + 0.5 - endy))
                     .clamp(0., 1.)
-                    .max((3.5 - dx.hypot(dy + r)).clamp(0., 1.));
+                    .max((2.5 - dx.hypot(dy + r)).clamp(0., 1.));
                 let colored = if used.is_some() && fraction > 0. {
                     if phase <= fraction {
                         coverage
@@ -669,15 +686,23 @@ mod island {
                 if s.settings.provider == 0 {
                     add(Action::Recover, 24, 570, 372, 34);
                 }
-                add(Action::Back, 24, 614, 178, 34);
-                add(Action::Quit, 210, 614, 186, 34);
+                add(Action::BubbleStyle, 24, 620, 372, 36);
+                add(Action::BubbleDensity, 24, 664, 372, 36);
+                add(Action::CircleNumbers, 24, 708, 372, 48);
+                add(Action::UsageAlerts, 24, 784, 372, 48);
+                add(Action::SessionThreshold, 154, 848, 140, 30);
+                add(Action::WeeklyThreshold, 154, 894, 140, 30);
+                add(Action::AutoSwitch, 24, 940, 372, 48);
+                add(Action::PauseForWork, 24, 998, 372, 48);
+                add(Action::Back, 24, 1138, 178, 34);
+                add(Action::Quit, 210, 1138, 186, 34);
             }
             View::Remove(_, _) => {
                 add(Action::Cancel, 24, 312, 120, 42);
                 add(Action::RemoveConfirm, 156, 312, 240, 42);
             }
             View::Notice(_, _) => add(Action::Back, 24, 410, 372, 42),
-            View::Confirm(_) | View::SwitchConfirm(_) => {
+            View::Confirm(_) | View::SwitchConfirm(_) | View::AutoSwitch(_) => {
                 add(Action::Cancel, 24, 312, 120, 42);
                 add(Action::Confirm, 156, 312, 240, 42)
             }
@@ -872,6 +897,7 @@ mod island {
             Action::MenuSlider => Some((0.75, 1.6)),
             Action::FloatSlider => Some((0.6, 1.8)),
             Action::BubbleSlider => Some((0.85, 1.6)),
+            Action::SessionThreshold | Action::WeeklyThreshold => Some((0.05, 1.0)),
             _ => None,
         }
     }
@@ -885,6 +911,8 @@ mod island {
             Action::MenuSlider => s.settings.menu_scale,
             Action::FloatSlider => s.settings.float_scale,
             Action::BubbleSlider => s.settings.bubble_scale,
+            Action::SessionThreshold => s.settings.session_threshold,
+            Action::WeeklyThreshold => s.settings.weekly_threshold,
             _ => 1.,
         }
     }
@@ -902,6 +930,14 @@ mod island {
             Action::MenuSlider => s.settings.menu_scale = value,
             Action::FloatSlider => s.settings.float_scale = value,
             Action::BubbleSlider => s.settings.bubble_scale = value,
+            Action::SessionThreshold => {
+                s.settings.session_threshold = value;
+                s.alerted.clear();
+            }
+            Action::WeeklyThreshold => {
+                s.settings.weekly_threshold = value;
+                s.alerted.clear();
+            }
             _ => {}
         }
     }
@@ -1356,7 +1392,7 @@ mod island {
                     s,
                     Action::Circle,
                     396,
-                    "Circle with usage ring",
+                    "Circle with two usage rings",
                     s.settings.circle,
                 );
                 toggle(
@@ -1391,8 +1427,121 @@ mod island {
                         false,
                     );
                 }
-                button(dc, s, Action::Back, 24, 614, 178, 34, "Back", false);
-                button(dc, s, Action::Quit, 210, 614, 186, 34, "Quit", false);
+                text(dc, 24, 604, 12, 600, "Floating appearance", white(), 372);
+                button(
+                    dc,
+                    s,
+                    Action::BubbleStyle,
+                    24,
+                    620,
+                    372,
+                    36,
+                    &format!(
+                        "Bubble shape: {}",
+                        ["Capsule", "Card", "Message"][s.settings.bubble_style.min(2)]
+                    ),
+                    false,
+                );
+                button(
+                    dc,
+                    s,
+                    Action::BubbleDensity,
+                    24,
+                    664,
+                    372,
+                    36,
+                    &format!(
+                        "Bubble detail: {}",
+                        ["Smart hover", "Compact", "Detailed"][s.settings.bubble_density.min(2)]
+                    ),
+                    false,
+                );
+                toggle(
+                    dc,
+                    s,
+                    Action::CircleNumbers,
+                    708,
+                    "Show percentage instead of M",
+                    s.settings.circle_numbers,
+                );
+                text(
+                    dc,
+                    24,
+                    764,
+                    16,
+                    600,
+                    "Usage alerts & switching",
+                    white(),
+                    372,
+                );
+                toggle(
+                    dc,
+                    s,
+                    Action::UsageAlerts,
+                    784,
+                    "Notify at usage thresholds",
+                    s.settings.usage_alerts,
+                );
+                size_slider(dc, s, Action::SessionThreshold, 863, "Session alert");
+                size_slider(dc, s, Action::WeeklyThreshold, 909, "Weekly alert");
+                toggle(
+                    dc,
+                    s,
+                    Action::AutoSwitch,
+                    940,
+                    "Auto-switch at these limits",
+                    s.settings.auto_switch,
+                );
+                toggle(
+                    dc,
+                    s,
+                    Action::PauseForWork,
+                    998,
+                    "Ask first when work may be open",
+                    s.settings.pause_for_work,
+                );
+                paragraph(dc,25,1060,"Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed.",muted());
+                button(dc, s, Action::Back, 24, 1138, 178, 34, "Back", false);
+                button(dc, s, Action::Quit, 210, 1138, 186, 34, "Quit", false);
+            }
+            View::AutoSwitch(i) => {
+                text(dc, 24, 89, 24, 600, "Usage limit reached", white(), 372);
+                let label = s
+                    .settings
+                    .accounts
+                    .get(*i)
+                    .map(|a| a.name.as_str())
+                    .unwrap_or("another account");
+                paragraph(dc,25,142,&format!("Switch to {label}? Claude may close and running projects or unsaved work may stop. Muisland cannot reliably tell whether a task is idle. Codex sessions need a restart to use the new sign-in."),muted());
+                text(
+                    dc,
+                    25,
+                    270,
+                    14,
+                    600,
+                    &s.auto_due
+                        .map(|due| {
+                            format!(
+                                "Switching in {} seconds",
+                                (due - s.clock.elapsed().as_secs_f32()).ceil().max(0.) as i32
+                            )
+                        })
+                        .unwrap_or_else(|| "App may be working · confirmation required".into()),
+                    accent(),
+                    372,
+                );
+                button(dc, s, Action::Cancel, 24, 312, 120, 42, "Cancel", false);
+                button(
+                    dc,
+                    s,
+                    Action::Confirm,
+                    156,
+                    312,
+                    240,
+                    42,
+                    "Switch now",
+                    true,
+                );
             }
             View::Remove(_, name) => {
                 text(dc, 24, 89, 24, 600, "Remove this account?", white(), 372);
@@ -1596,11 +1745,52 @@ mod island {
             let cy = s.h / 2.;
             let account = s.active.and_then(|i| s.settings.accounts.get(i));
             let u = account.and_then(|a| a.usage.as_ref());
-            let used = u
-                .and_then(|u| u.session.as_ref().or(u.weekly.as_ref()))
+            let used = u.and_then(|u| u.session.as_ref()).map(|w| w.used);
+            let weekly = s
+                .active
+                .and_then(|i| s.settings.accounts.get(i))
+                .and_then(|a| a.usage.as_ref())
+                .and_then(|u| u.weekly.as_ref())
                 .map(|w| w.used);
-            ring(source.dc, cx, cy, 27., used);
-            mark(source.dc, cx as i32 - 9, cy as i32 - 9, 18, white());
+            let pulse =
+                if !s.settings.reduced_motion && s.pulse_until > s.clock.elapsed().as_secs_f32() {
+                    (s.clock.elapsed().as_secs_f32() * 8.).sin().abs() * 0.4
+                } else {
+                    0.
+                };
+            ring_color(
+                source.dc,
+                cx,
+                cy,
+                30.,
+                weekly.map(|v| s.ring_weekly.unwrap_or(v)),
+                mix(0x00E8C17F, white(), pulse),
+            );
+            ring_color(
+                source.dc,
+                cx,
+                cy,
+                23.,
+                used.map(|v| s.ring_session.unwrap_or(v)),
+                mix(accent(), white(), pulse),
+            );
+            if s.settings.circle_numbers {
+                let label = used
+                    .map(|v| format!("{v:.0}%"))
+                    .unwrap_or_else(|| "—".into());
+                text(
+                    source.dc,
+                    cx as i32 - 16,
+                    cy as i32 - 8,
+                    13,
+                    600,
+                    &label,
+                    white(),
+                    37,
+                );
+            } else {
+                mark(source.dc, cx as i32 - 8, cy as i32 - 8, 16, white());
+            }
         } else {
             panel(
                 source.dc,
@@ -1986,7 +2176,11 @@ mod island {
     }
     unsafe fn render_bubble(s: &State, scale: f32, right: bool, tail: f32) -> Option<Surface> {
         ACTIVE_THEME.with(|v| v.set(s.settings.theme));
-        let source = Surface::new(BUBBLE_W as i32 * 2, BUBBLE_H as i32 * 2);
+        let detailed = s.settings.bubble_density == 2
+            || (s.settings.bubble_density == 0
+                && s.clock.elapsed().as_secs_f32() - s.hover_since > 0.85);
+        let height = 100. + (BUBBLE_H - 100.) * s.bubble_detail;
+        let source = Surface::new(BUBBLE_W as i32 * 2, height as i32 * 2);
         if source.bits.is_null() {
             return None;
         }
@@ -2020,7 +2214,12 @@ mod island {
         let caption = u
             .map(|u| {
                 format!(
-                    "{} · {}",
+                    "{} · {} · {}",
+                    if s.settings.provider == 1 {
+                        "Codex"
+                    } else {
+                        "Claude"
+                    },
                     u.plan,
                     if s.preview {
                         "Sample usage"
@@ -2031,43 +2230,105 @@ mod island {
             })
             .unwrap_or_else(|| "Usage not available yet".into());
         text(source.dc, inset + 20, 43, 10, 400, &caption, muted(), 252);
-        line(
-            source.dc,
-            &[(inset + 20, 65), (inset + 276, 65)],
-            1,
-            0x00433732,
-        );
-        quota(
-            source.dc,
-            inset + 20,
-            77,
-            256,
-            if s.settings.provider == 1 {
-                "Session"
-            } else {
-                "5h"
-            },
-            u.and_then(|u| u.session.as_ref()),
-        );
-        quota(
-            source.dc,
-            inset + 20,
-            131,
-            256,
-            if s.settings.provider == 1 {
-                "Extended"
-            } else {
-                "7d"
-            },
-            u.and_then(|u| u.weekly.as_ref()),
-        );
-        compose(&source, BUBBLE_W, BUBBLE_H, scale, |x, y| {
-            let body = rounded_alpha(x, y, inset as f32, 0., 296., BUBBLE_H, 22.);
+        if detailed && s.bubble_detail > 0.65 {
+            line(
+                source.dc,
+                &[(inset + 20, 65), (inset + 276, 65)],
+                1,
+                0x00433732,
+            );
+            quota(
+                source.dc,
+                inset + 20,
+                77,
+                256,
+                if s.settings.provider == 1 {
+                    "Session"
+                } else {
+                    "5h"
+                },
+                u.and_then(|u| u.session.as_ref()),
+            );
+            quota(
+                source.dc,
+                inset + 20,
+                131,
+                256,
+                if s.settings.provider == 1 {
+                    "Extended"
+                } else {
+                    "7d"
+                },
+                u.and_then(|u| u.weekly.as_ref()),
+            );
+        } else {
+            let value = |w: Option<&Window>| {
+                w.map(|w| format!("{:.0}%", w.used))
+                    .unwrap_or_else(|| "—".into())
+            };
+            text(
+                source.dc,
+                inset + 20,
+                69,
+                13,
+                600,
+                &format!(
+                    "{} {}",
+                    if s.settings.provider == 1 {
+                        "Session"
+                    } else {
+                        "5h"
+                    },
+                    value(u.and_then(|u| u.session.as_ref()))
+                ),
+                accent(),
+                125,
+            );
+            text(
+                source.dc,
+                inset + 157,
+                69,
+                13,
+                600,
+                &format!(
+                    "{} {}",
+                    if s.settings.provider == 1 {
+                        "Extended"
+                    } else {
+                        "7d"
+                    },
+                    value(u.and_then(|u| u.weekly.as_ref()))
+                ),
+                0x00E8C17F,
+                125,
+            );
+        }
+        compose(&source, BUBBLE_W, height, scale, |x, y| {
+            let body = rounded_alpha(
+                x,
+                y,
+                inset as f32,
+                0.,
+                296.,
+                height,
+                if s.settings.bubble_style == 0 {
+                    32.
+                } else if s.settings.bubble_style == 1 {
+                    14.
+                } else {
+                    22.
+                },
+            );
             let depth = if right { x } else { BUBBLE_W - x };
             // Symmetric triangle overlaps the body to avoid a hairline seam.
-            let triangle = ((depth - (y - tail).abs()) / 2f32.sqrt() + 0.5).clamp(0., 1.)
+            let triangle = ((depth - (y - tail.min(height - 22.)).abs()) / 2f32.sqrt() + 0.5)
+                .clamp(0., 1.)
                 * (12.5 - depth).clamp(0., 1.);
-            body.max(triangle)
+            if s.settings.bubble_style == 2 {
+                body.max(triangle)
+            } else {
+                body
+            }
         })
     }
     unsafe fn paint_bubble(s: &State) {
@@ -2202,6 +2463,7 @@ mod island {
             s.edit_focus = false;
             s.transition = 1.;
             s.reveal = 1.;
+            s.bubble_detail = 1.;
             match name{
                 "preferences"=>s.view=View::Preferences,
                 "remove-account"=>s.view=View::Remove(0,"Personal".into()),
@@ -2307,6 +2569,7 @@ mod island {
         s.focus = Action::None;
     }
     fn collapse(s: &mut State) {
+        s.auto_due = None;
         s.open = false;
         discard_drafts(s);
         s.peek = false;
@@ -2321,6 +2584,9 @@ mod island {
         !s.open || (y < 58 && x < EW as i32 - 100)
     }
     fn navigate(s: &mut State, next: View, _backwards: bool) {
+        if !matches!(next, View::AutoSwitch(_)) {
+            s.auto_due = None;
+        }
         if matches!(next, View::Preferences) && !matches!(s.view, View::Preferences) {
             s.prefs_scroll = 0;
         }
@@ -2448,6 +2714,13 @@ mod island {
         s.edit_focus = false;
         let preview = s.preview;
         let active = s.active;
+        let expected_source = if matches!(s.view, View::AutoSwitch(_)) {
+            s.active
+                .and_then(|i| s.identities.get(i))
+                .and_then(|id| id.clone())
+        } else {
+            None
+        };
         let protect = s.settings.protect_local;
         let provider = s.settings.provider;
         let slot = match op {
@@ -2468,6 +2741,16 @@ mod island {
         );
         std::thread::spawn(move || {
             let result = (|| -> Result<Outcome, String> {
+                if let Some(expected) = expected_source.as_ref() {
+                    let current = if provider == 1 {
+                        codex::current_identity().ok()
+                    } else {
+                        usage::current_account_identity().ok()
+                    };
+                    if !preview && current.as_ref() != Some(expected) {
+                        return Err("Signed-in account changed. Auto-switch cancelled.".into());
+                    }
+                }
                 if let Op::Switch(i) = op {
                     if (preview && active == Some(i))
                         || (!preview
@@ -2585,6 +2868,108 @@ mod island {
             let _ = tx.send(result);
         });
     }
+    fn threshold_hit(s: &State, i: usize) -> bool {
+        s.settings
+            .accounts
+            .get(i)
+            .and_then(|a| a.usage.as_ref())
+            .is_some_and(|u| {
+                accounts::now().saturating_sub(u.updated) <= 90
+                    && (u.session.as_ref().is_some_and(|w| {
+                        w.resets.is_none_or(|r| r > accounts::now())
+                            && w.used >= s.settings.session_threshold as f64 * 100.
+                    }) || u.weekly.as_ref().is_some_and(|w| {
+                        w.resets.is_none_or(|r| r > accounts::now())
+                            && w.used >= s.settings.weekly_threshold as f64 * 100.
+                    }))
+            })
+    }
+    fn auto_target(s: &State) -> Option<usize> {
+        let active = s.active?;
+        if !threshold_hit(s, active) || !s.usage_errors.get(active).is_some_and(|e| e.is_empty()) {
+            return None;
+        }
+        s.settings
+            .accounts
+            .iter()
+            .enumerate()
+            .filter(|(i, a)| {
+                *i != active
+                    && !a.draft
+                    && s.saved.get(*i) == Some(&true)
+                    && s.usage_errors.get(*i).is_some_and(|e| e.is_empty())
+                    && s.identities
+                        .get(*i)
+                        .and_then(|v| v.as_ref())
+                        .is_some_and(|id| {
+                            Some(id) != s.identities.get(active).and_then(|v| v.as_ref())
+                        })
+            })
+            .filter_map(|(i, a)| {
+                let u = a.usage.as_ref()?;
+                let x = u.session.as_ref()?;
+                let y = u.weekly.as_ref()?;
+                if accounts::now().saturating_sub(u.updated) > 300
+                    || x.resets.is_some_and(|r| r <= accounts::now())
+                    || y.resets.is_some_and(|r| r <= accounts::now())
+                    || x.used >= s.settings.session_threshold as f64 * 100.
+                    || y.used >= s.settings.weekly_threshold as f64 * 100.
+                {
+                    return None;
+                }
+                Some((i, x.used.max(y.used)))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|v| v.0)
+    }
+    fn evaluate_limits(s: &mut State) {
+        if (!s.settings.usage_alerts && !s.settings.auto_switch)
+            || s.worker.is_some()
+            || !matches!(s.view, View::Home)
+        {
+            return;
+        }
+        let Some(i) = s.active else {
+            return;
+        };
+        let key = (s.settings.provider, s.settings.accounts[i].slot);
+        if !threshold_hit(s, i) {
+            s.alerted.remove(&key);
+            return;
+        }
+        if !s.usage_errors.get(i).is_some_and(|e| e.is_empty()) || !s.alerted.insert(key) {
+            return;
+        }
+        s.pulse_until = s.clock.elapsed().as_secs_f32() + 2.;
+        if s.settings.auto_switch {
+            if let Some(target) = auto_target(s) {
+                let may_work =
+                    s.settings.provider == 1 || (!s.preview && profiles::claude_running());
+                s.auto_due = if s.settings.pause_for_work && may_work {
+                    None
+                } else {
+                    Some(s.clock.elapsed().as_secs_f32() + 15.)
+                };
+                navigate(s, View::AutoSwitch(target), false);
+                s.focus = Action::Cancel;
+                return;
+            }
+        }
+        notice(
+            s,
+            "Usage alert",
+            format!(
+                "{} reached a configured usage threshold. {}",
+                s.settings.accounts[i].name,
+                if s.settings.auto_switch {
+                    "No saved account has fresh, lower usage in both windows. No switch was made."
+                } else {
+                    "Open accounts to review usage or switch."
+                }
+            ),
+            false,
+        );
+    }
     fn name_save(s: &mut State) {
         if let View::Details(i) = s.view {
             match accounts::valid_name(&String::from_utf16_lossy(&s.edit)) {
@@ -2687,6 +3072,9 @@ mod island {
         s.focus = Action::None;
     }
     unsafe fn activate(hwnd: HWND, s: &mut State, a: Action) {
+        if !matches!(a, Action::Confirm) {
+            s.auto_due = None;
+        }
         match a {
             Action::None => {}
             Action::ClaudeTab | Action::CodexTab => {
@@ -2714,7 +3102,39 @@ mod island {
                     s.hover_levels.clear();
                 }
             }
-            Action::MenuSlider | Action::FloatSlider | Action::BubbleSlider => {}
+            Action::MenuSlider
+            | Action::FloatSlider
+            | Action::BubbleSlider
+            | Action::SessionThreshold
+            | Action::WeeklyThreshold => {}
+            Action::BubbleStyle => {
+                s.settings.bubble_style = (s.settings.bubble_style + 1) % 3;
+                persist(s);
+            }
+            Action::BubbleDensity => {
+                s.settings.bubble_density = (s.settings.bubble_density + 1) % 3;
+                persist(s);
+            }
+            Action::CircleNumbers => {
+                s.settings.circle_numbers = !s.settings.circle_numbers;
+                persist(s);
+            }
+            Action::UsageAlerts => {
+                s.settings.usage_alerts = !s.settings.usage_alerts;
+                s.alerted.clear();
+                persist(s);
+            }
+            Action::AutoSwitch => {
+                s.settings.auto_switch = !s.settings.auto_switch;
+                s.alerted.clear();
+                persist(s);
+            }
+            Action::PauseForWork => {
+                s.settings.pause_for_work = !s.settings.pause_for_work;
+                s.auto_due = None;
+                persist(s);
+            }
+
             Action::Theme(index) => {
                 s.settings.theme = index.min(3);
                 persist(s);
@@ -2777,12 +3197,12 @@ mod island {
             Action::Confirm => {
                 let operation = match s.view {
                     View::Confirm(op) => Some(op),
-                    View::SwitchConfirm(i) => Some(Op::Switch(i)),
+                    View::SwitchConfirm(i) | View::AutoSwitch(i) => Some(Op::Switch(i)),
                     _ => None,
                 };
                 if let Some(op) = operation {
-                    navigate(s, View::Home, true);
                     begin(s, op, true);
+                    navigate(s, View::Home, true);
                 }
             }
             Action::Add => {
@@ -2946,6 +3366,18 @@ mod island {
                 let dt = now.duration_since(s.last).as_secs_f32().min(0.05);
                 s.last = now;
                 let t = s.clock.elapsed().as_secs_f32();
+                if let (Some(due), View::AutoSwitch(i)) = (s.auto_due, s.view.clone()) {
+                    if t >= due && s.open && s.worker.is_none() {
+                        s.auto_due = None;
+                        let valid = auto_target(s) == Some(i);
+                        if valid {
+                            begin(s, Op::Switch(i), true);
+                            navigate(s, View::Home, true);
+                        } else {
+                            notice(s,"Auto-switch paused","Usage or account state changed. Review the accounts and switch manually.",false);
+                        }
+                    }
+                }
                 let before_position = (s.anchor, s.top);
                 if !s.open && GetAsyncKeyState(0x01) < 0 {
                     if let Some((dx, dy, _)) = s.down {
@@ -3003,6 +3435,9 @@ mod island {
                     if on_bubble
                         || (inside && ((x - 38.).powi(2) + (y - 38.).powi(2) < 38f32.powi(2)))
                     {
+                        if !s.peek {
+                            s.hover_since = t;
+                        }
                         s.peek = true;
                         s.peek_until = t + 0.3;
                     } else if t > s.peek_until {
@@ -3019,12 +3454,49 @@ mod island {
                 if s.open || !s.settings.circle || s.drag || s.down.is_some() {
                     s.peek = false;
                 }
-                let bubble_target =
-                    if s.peek && (s.w - CIRCLE).abs() < 0.1 && (s.h - CIRCLE).abs() < 0.1 {
-                        1.
-                    } else {
-                        0.
-                    };
+                let usage = s
+                    .active
+                    .and_then(|i| s.settings.accounts.get(i))
+                    .and_then(|a| a.usage.as_ref());
+                for (display, target) in [
+                    (
+                        &mut s.ring_session,
+                        usage.and_then(|u| u.session.as_ref()).map(|w| w.used),
+                    ),
+                    (
+                        &mut s.ring_weekly,
+                        usage.and_then(|u| u.weekly.as_ref()).map(|w| w.used),
+                    ),
+                ] {
+                    *display = target.map(|target| {
+                        if s.settings.reduced_motion {
+                            target
+                        } else {
+                            let old = display.unwrap_or(target);
+                            old + (target - old) * (dt as f64 * 8.).min(1.)
+                        }
+                    });
+                }
+                let detail_target = if s.settings.bubble_density == 2
+                    || (s.settings.bubble_density == 0 && t - s.hover_since > 0.85)
+                {
+                    1.
+                } else {
+                    0.
+                };
+                s.bubble_detail = if s.settings.reduced_motion {
+                    detail_target
+                } else {
+                    s.bubble_detail + (detail_target - s.bubble_detail) * (dt * 12.).min(1.)
+                };
+                let bubble_target = if (s.peek || s.toast_until > t)
+                    && (s.w - CIRCLE).abs() < 0.1
+                    && (s.h - CIRCLE).abs() < 0.1
+                {
+                    1.
+                } else {
+                    0.
+                };
                 s.bubble_alpha = if s.settings.reduced_motion {
                     bubble_target
                 } else {
@@ -3102,7 +3574,11 @@ mod island {
                 }
                 let hover_changed = animate_hover(s, dt);
                 constrain(s);
-                let mut changed = hover_changed
+                let mut changed = s.toast_until > t
+                    || s.pulse_until > t
+                    || s.peek
+                    || matches!(s.view, View::AutoSwitch(_))
+                    || hover_changed
                     || old_page_fade != s.page_fade
                     || before_position != (s.anchor, s.top);
                 if let Some(result) = s.sync.as_ref().and_then(|r| r.try_recv().ok()) {
@@ -3141,7 +3617,10 @@ mod island {
                         }
                     }
                     if measurements {
-                        persist(s)
+                        persist(s);
+                        if result.generation == s.generation {
+                            evaluate_limits(s);
+                        }
                     }
                     changed = true;
                 }
@@ -3213,6 +3692,10 @@ mod island {
                             }
                         }
                         Ok(Outcome::Done(op, label)) => {
+                            if matches!(op, Op::Switch(_)) {
+                                s.toast_until = t + 2.;
+                                s.hover_since = t;
+                            }
                             let visible = s.open;
                             if let Op::Save(i) = op {
                                 s.settings.accounts[i].draft = false;
@@ -3362,7 +3845,7 @@ mod island {
                 if s.open && matches!(s.view, View::Preferences) && s.slider_drag.is_none() {
                     let delta = ((wp >> 16) as u16) as i16;
                     s.prefs_scroll =
-                        (s.prefs_scroll - (delta as f32 / 120. * 40.).round() as i32).clamp(0, 120);
+                        (s.prefs_scroll - (delta as f32 / 120. * 40.).round() as i32).clamp(0, 644);
                     InvalidateRect(hwnd, null_mut(), 0);
                 }
                 0
@@ -3399,7 +3882,7 @@ mod island {
                 let key = wp as u32;
                 if matches!(s.view, View::Preferences) && [0x21, 0x22].contains(&key) {
                     s.prefs_scroll =
-                        (s.prefs_scroll + if key == 0x22 { 100 } else { -100 }).clamp(0, 120);
+                        (s.prefs_scroll + if key == 0x22 { 100 } else { -100 }).clamp(0, 644);
                 } else if matches!(s.view, View::Preferences)
                     && slider_bounds(s.focus).is_some()
                     && [0x25, 0x27, 0x24, 0x23].contains(&key)
@@ -3528,6 +4011,7 @@ mod island {
             peek_until: 0.,
             bubble: null_mut(),
             bubble_alpha: 0.,
+            bubble_detail: 0.,
             w: if circle { CIRCLE } else { PILL_W },
             h: if circle { CIRCLE } else { PILL_H },
             vw: 0.,
@@ -3550,6 +4034,13 @@ mod island {
             slider_drag: None,
             slider_preview: None,
             prefs_scroll: 0,
+            hover_since: 0.,
+            pulse_until: 0.,
+            toast_until: 0.,
+            ring_session: None,
+            ring_weekly: None,
+            auto_due: None,
+            alerted: Default::default(),
             mouse_was_down: false,
             origin: (0, 0),
             edit: Vec::new(),
@@ -3777,7 +4268,8 @@ mod island {
         }
         #[test]
         fn bubble_has_transparent_corners_and_tail_on_correct_side() {
-            let s = initial(true, 0., 0);
+            let mut s = initial(true, 0., 0);
+            s.bubble_detail = 1.;
             for right in [false, true] {
                 let image = unsafe { render_bubble(&s, 1., right, 94.) }.unwrap();
                 let pixels = unsafe {
@@ -3925,6 +4417,57 @@ mod island {
             assert!(buttons(&s).iter().any(|b| b.action == Action::Add));
         }
         #[test]
+        fn automatic_switch_requires_fresh_complete_lower_usage_and_distinct_identity() {
+            let mut s = initial(true, 0., 0);
+            s.active = Some(0);
+            refresh_slots(&mut s);
+            s.settings.accounts[0]
+                .usage
+                .as_mut()
+                .unwrap()
+                .session
+                .as_mut()
+                .unwrap()
+                .used = 90.;
+            s.settings.accounts[1]
+                .usage
+                .as_mut()
+                .unwrap()
+                .session
+                .as_mut()
+                .unwrap()
+                .used = 20.;
+            assert_eq!(auto_target(&s), Some(1));
+            s.settings.accounts[1].usage.as_mut().unwrap().updated = accounts::now() - 301;
+            assert_eq!(auto_target(&s), None);
+            s.settings.accounts[1].usage.as_mut().unwrap().updated = accounts::now();
+            s.settings.accounts[1].usage.as_mut().unwrap().weekly = None;
+            assert_eq!(auto_target(&s), None);
+        }
+        #[test]
+        fn alert_is_once_per_crossing_and_collapse_cancels_countdown() {
+            let mut s = initial(true, 0., 0);
+            s.active = Some(0);
+            refresh_slots(&mut s);
+            s.settings.usage_alerts = true;
+            s.settings.accounts[0]
+                .usage
+                .as_mut()
+                .unwrap()
+                .session
+                .as_mut()
+                .unwrap()
+                .used = 90.;
+            evaluate_limits(&mut s);
+            assert!(matches!(s.view, View::Notice(..)));
+            navigate(&mut s, View::Home, true);
+            evaluate_limits(&mut s);
+            assert!(matches!(s.view, View::Home));
+            s.auto_due = Some(10.);
+            collapse(&mut s);
+            assert!(s.auto_due.is_none());
+        }
+        #[test]
         fn settings_sliders_clamp_and_do_not_change_other_sizes() {
             let mut s = initial(true, 0., 0);
             assert!((slider_from_x(Action::MenuSlider, -100) - 0.75).abs() < 0.001);
@@ -3945,7 +4488,7 @@ mod island {
             s.reveal = 1.;
             s.transition = 1.;
             assert!(!buttons(&s).iter().any(|b| b.action == Action::Quit));
-            s.prefs_scroll = 120;
+            s.prefs_scroll = 644;
             assert!(buttons(&s).iter().any(|b| b.action == Action::Quit));
             assert_eq!(hit(&s, 110, 80), Action::ClaudeTab);
             for button in buttons(&s).iter().skip(5) {

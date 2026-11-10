@@ -17,6 +17,31 @@ class LinuxBackendTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_auto_switch_rejects_stale_and_missing_quotas(self):
+        service = backend.Service(preview=True)
+        rows = service.settings["claude"]
+        rows[0]["usage"]["session"]["used"] = 90
+        self.assertEqual(service.auto_candidate()["slot"], 2)
+        rows[1]["usage"]["updated"] = 0
+        self.assertIsNone(service.auto_candidate())
+        rows[1]["usage"]["updated"] = backend.time.time()
+        rows[1]["usage"]["weekly"] = None
+        self.assertIsNone(service.auto_candidate())
+
+    def test_auto_switch_countdown_and_cancel_are_enforced(self):
+        service = backend.Service(preview=True)
+        service.settings.update(auto_switch=True, pause_for_work=False)
+        service.settings["claude"][0]["usage"]["session"]["used"] = 90
+        service.check_limits()
+        alert = service.state()["usage_alert"]
+        self.assertNotIn("source", alert)
+        with self.assertRaises(ValueError):
+            service.handle("auto_execute", {"id": alert["id"]})
+        service.handle("auto_cancel")
+        self.assertIsNone(service.state()["usage_alert"])
+        service.check_limits()
+        self.assertIsNone(service.state()["usage_alert"])
+
     def test_vault_is_authenticated_and_private(self):
         self.vault.write_json("profiles/one.bin", {"account": "sample"})
         path = self.vault.root / "profiles/one.bin"

@@ -510,6 +510,14 @@
         text-align: center;
         margin: 0 0 14px;
       }
+      .meter.weekly {stroke:#7fc1e8}
+      .float .m.number {font-size:15px;font-weight:650}
+      .bubble.capsule {border-radius:32px}.bubble.card{border-radius:14px}
+      .bubble.compact .rule,.bubble.compact .reset,.bubble.compact .track {display:none}
+      .bubble.compact .quota {display:inline-block;width:49%;margin-top:12px}
+      .bubble .quota:last-child .quota-title {color:#7fc1e8}
+      .bubble {transition:height .25s ease,border-radius .25s ease;overflow:hidden}
+      .bubble.compact {height:108px}
     </style>
   </head>
   <body>
@@ -620,6 +628,8 @@
               }
             : null;
         data = value;
+        if (value.usage_alert) { view="auto"; }
+        else if(view==="auto") {view="home";}
         if (value.error) {
           notice = value.error;
           view = "notice";
@@ -685,12 +695,13 @@
         if (role === "float") {
           const u = active()?.usage;
           const used = u?.session?.used ?? u?.weekly?.used ?? 0;
-          root.innerHTML = `<button class="float ${data.settings.circle ? "" : "pill"}" aria-label="Open Muisland"><svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="27"/><circle class="meter" cx="30" cy="30" r="27" stroke-dasharray="169.65" stroke-dashoffset="${169.65 * (1 - used / 100)}"/></svg><span class="m">M</span><span class="pill-label">Muisland</span><span class="pill-label plus">+</span></button>`;
+          const weekly=u?.weekly?.used ?? 0;
+          root.innerHTML = `<button class="float ${data.settings.circle ? "" : "pill"}" aria-label="Open Muisland · inner session, outer weekly"><svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="28"/><circle cx="30" cy="30" r="21"/><circle class="meter weekly" cx="30" cy="30" r="28" stroke-dasharray="175.93" stroke-dashoffset="${175.93*(1-weekly/100)}"/><circle class="meter" cx="30" cy="30" r="21" stroke-dasharray="131.95" stroke-dashoffset="${131.95*(1-used/100)}"/></svg><span class="m ${data.settings.circle_numbers?'number':''}">${data.settings.circle_numbers ? (u?.session ? Math.round(used)+'%' : '—') : 'M'}</span><span class="pill-label">Muisland</span><span class="pill-label plus">+</span></button>`;
           return;
         }
         if (role === "bubble") {
           const a = active();
-          root.innerHTML = `<div class="bubble" role="button" tabindex="0"><h2>${esc(a?.name || "No active saved account")}</h2><div class="hint">${esc(a?.usage?.plan || data.provider)} · ${data.preview ? "Sample usage" : "Automatic usage"}</div><div class="rule"></div>${quota("5h", a?.usage?.session)}${quota("7d", a?.usage?.weekly)}</div>`;
+          root.innerHTML = `<div class="bubble ${["capsule","card","message"][data.settings.bubble_style??2]} ${data.settings.bubble_density===2 || (data.settings.bubble_density!==1 && smartExpanded) ? "" : "compact"}" role="button" tabindex="0"><h2>${esc(a?.name || "No active saved account")}</h2><div class="hint">${esc(data.provider)} · ${esc(a?.usage?.plan || "")} · ${data.preview ? "Sample usage" : "Automatic usage"}</div><div class="rule"></div>${quota("5h", a?.usage?.session)}${quota("7d", a?.usage?.weekly)}</div>`;
           return;
         }
         let content = "";
@@ -729,6 +740,13 @@
             )
             .join("");
           content += `<label class="toggle-row">Circle with usage ring<input class="toggle" type="checkbox" data-toggle="circle" ${data.settings.circle ? "checked" : ""}></label><label class="toggle-row">Reduce motion<input class="toggle" type="checkbox" data-toggle="reduced_motion" ${data.settings.reduced_motion ? "checked" : ""}></label>${native ? `<label class="toggle-row">Start with desktop<input class="toggle" type="checkbox" data-autostart ${data.desktop?.autostart ? "checked" : ""}></label><button class="wide" data-reset-position>Reset floating position</button><p class="hint">${esc(data.desktop?.backend || "Linux desktop")}</p>` : ""}<button class="wide" data-operation="rollback">Restore previous sign-in</button>${data.provider === "claude" ? '<button class="wide" data-operation="recover">Recover local backup to folder</button>' : ""}<div class="row-buttons"><button data-back>Back</button><button data-quit>Quit</button></div>`;
+          content += `<h2>Floating appearance</h2><label class="size-row">Bubble shape<select data-setting="bubble_style">${["Capsule","Card","Message"].map((x,i)=>`<option value="${i}" ${i===(data.settings.bubble_style??2)?"selected":""}>${x}</option>`).join("")}</select></label><label class="size-row">Bubble detail<select data-setting="bubble_density">${["Smart hover","Compact","Detailed"].map((x,i)=>`<option value="${i}" ${i===(data.settings.bubble_density??0)?"selected":""}>${x}</option>`).join("")}</select></label>`;
+          for(const [key,label] of [["circle_numbers","Show percentage instead of M"],["usage_alerts","Notify at usage thresholds"],["auto_switch","Auto-switch at thresholds"],["pause_for_work","Ask first when work may be open"]]) content+=`<label class="toggle-row">${label}<input class="toggle" type="checkbox" data-toggle="${key}" ${data.settings[key]?"checked":""}></label>`;
+          for(const [key,label] of [["session_threshold","Session alert"],["weekly_threshold","Weekly alert"]]) content+=`<label class="size-row">${label}<input type="range" data-size="${key}" min=".05" max="1" step=".05" value="${data.settings[key]??.8}"><output>${Math.round((data.settings[key]??.8)*100)}%</output></label>`;
+          content+='<p class="hint">Auto-switch waits 15 seconds. Closing the Island cancels it. Running tasks and unsaved work may stop; idle detection is not guaranteed.</p>';
+        } else if(view === "auto") {
+          const a=data.usage_alert;
+          content=`<h1>Usage alert</h1><p class="selected-name">${a?.slot ? 'Switch to '+esc(a.name) : 'Threshold reached'}</p><p class="confirm-copy">${esc(a?.warning||'')}</p><p id="autoCountdown" class="selected-name"></p><div class="row-buttons"><button data-auto-cancel>Cancel</button>${a?.slot?'<button class="primary" data-auto-confirm>Switch now</button>':''}</div>`;
         } else if (view === "edit") {
           let a = data.accounts.find((a) => a.slot === editing);
           if (!a) {
@@ -773,6 +791,8 @@
             await invoke("view", { view: "float" });
           return;
         }
+        if(b.hasAttribute("data-auto-cancel")){await command("auto_cancel");view="home";render();return;}
+        if(b.hasAttribute("data-auto-confirm")){await command("auto_execute",{id:data.usage_alert?.id,confirmed:true});view="home";render();return;}
         if (b.hasAttribute("data-retry-storage")) { const result = await command("retry-storage"); if (result?.settings) { data = result; view = "home"; render(); } return; }
         if (b.hasAttribute("data-reset-position")) { await invoke("reset-position"); return; }
         if (b.dataset.provider) {
@@ -865,6 +885,7 @@
         } else if (b.hasAttribute("data-quit")) await invoke("quit");
       });
       root.addEventListener("change", (e) => {
+        if(e.target.dataset.setting) command("settings",{[e.target.dataset.setting]:+e.target.value});
         if (e.target.hasAttribute("data-autostart")) command("autostart", {enabled:e.target.checked});
         if (e.target.dataset.toggle)
           command("settings", { [e.target.dataset.toggle]: e.target.checked });
@@ -890,10 +911,20 @@
         if (e.key === "Enter" && (role === "float" || role === "bubble"))
           invoke("view", { view: "menu" });
       });
+      let smartExpanded=false, hoverTimer;
+      setInterval(async()=>{
+        const a=data.usage_alert;
+        if(role!=="menu" || view!=="auto" || !a?.due || data.busy)return;
+        const remaining=Math.max(0,Math.ceil(a.due-Date.now()/1000));
+        const node=document.getElementById("autoCountdown");if(node)node.textContent=`Switching in ${remaining} seconds`;
+        if(!remaining){data.busy=true;await command("auto_execute",{id:a.id});data.busy=false;view="home";render();}
+      },250);
       document.addEventListener("pointerenter", () => {
+        if(role!=="menu"){clearTimeout(hoverTimer);hoverTimer=setTimeout(()=>{smartExpanded=true;render();},850);}
         if (role !== "menu") invoke("hover", { inside: true });
       });
       document.addEventListener("pointerleave", () => {
+        clearTimeout(hoverTimer);smartExpanded=false;
         if (role !== "menu") invoke("hover", { inside: false });
       });
       const mockProfiles = {
