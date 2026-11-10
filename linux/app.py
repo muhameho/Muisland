@@ -43,10 +43,20 @@ def main():
         help="Return the island to the primary monitor",
     )
     parser.add_argument("--quit", action="store_true", help="Quit the running island")
+    parser.add_argument(
+        "--diagnose-usage",
+        action="store_true",
+        help="Print safe local Claude credential-format diagnostics; no network or credentials in output",
+    )
     parser.add_argument("--no-network", action="store_true")
     parser.add_argument("--check-env", action="store_true")
     parser.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
+    if args.diagnose_usage:
+        from backend import claude_diagnostics
+
+        print(json.dumps(claude_diagnostics(), indent=2))
+        return
     if args.check_env:
         print("GTK 3, WebKitGTK, Cairo, and encrypted Linux backend are available.")
         return
@@ -135,6 +145,11 @@ def main():
                     pixbuf = Gdk.pixbuf_get_from_window(window, 0, 0, w, h)
                     if pixbuf:
                         pixbuf.savev(screenshot, "png", [], [])
+                app.show_menu()
+                app.windows["menu"].emit(
+                    "focus-out-event", Gdk.Event.new(Gdk.EventType.FOCUS_CHANGE)
+                )
+                assert app.open, "Pointer-driven focus loss closed the menu"
                 original = app.floating
                 app.close_menu()
                 app.show_menu()
@@ -214,6 +229,8 @@ class Shell:
         self.requests = 0
         self.smoke_ok = False
         self.fades = {}
+        self.outside_buttons = 0
+        self.backdrops = []
         self.wayland = "Wayland" in Gdk.Display.get_default().__gtype__.name
         self.layer = bool(
             self.wayland and GtkLayerShell and GtkLayerShell.is_supported()
@@ -236,6 +253,8 @@ class Shell:
         self.windows["float"].present()
         GLib.timeout_add(5000, self.refresh)
         GLib.timeout_add(1000, self.push)
+        if not self.wayland:
+            GLib.timeout_add(16, self.watch_outside_click)
         if self.service.preview:
             GLib.timeout_add(150, lambda: (self.show_menu(), False)[1])
 
@@ -309,8 +328,8 @@ class Shell:
         self.views[role] = view
         win.connect("delete-event", lambda *_: (Gtk.main_quit(), True)[1])
         win.connect("configure-event", lambda *_: self.configured(role))
-        if role == "menu":
-            win.connect("focus-out-event", lambda *_: (self.close_menu(), False)[1])
+        # Focus can follow the pointer on Linux. It is not an outside-click signal.
+        # X11 observes button transitions; native layer-shell uses a click backdrop.
         if role in ("float", "menu"):
             view.add_events(
                 Gdk.EventMask.BUTTON_PRESS_MASK
@@ -448,6 +467,9 @@ class Shell:
         return False
 
     def monitors_changed(self):
+        for backdrop in self.backdrops:
+            backdrop.destroy()
+        self.backdrops = []
         self.resize_all()
         self.move_float()
         if self.open:
@@ -512,7 +534,80 @@ class Shell:
 
         self.fades[role] = GLib.timeout_add(16, tick)
 
+    def pointer_buttons(self):
+        pointer = Gdk.Display.get_default().get_default_seat().get_pointer()
+        root = Gdk.get_default_root_window()
+        if root is None or pointer is None:
+            return 0, 0, 0
+        result = root.get_device_position(pointer)
+        return result[-3], result[-2], int(result[-1]) & 0x1F00
+
+    def prepare_outside_click(self):
+        if not self.wayland:
+            self.outside_buttons = self.pointer_buttons()[2]
+        elif self.layer:
+            if not self.backdrops:
+                display = Gdk.Display.get_default()
+                for index in range(display.get_n_monitors()):
+                    backdrop = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+                    backdrop.set_decorated(False)
+                    backdrop.set_accept_focus(False)
+                    backdrop.set_app_paintable(True)
+                    visual = backdrop.get_screen().get_rgba_visual()
+                    if visual:
+                        backdrop.set_visual(visual)
+                    GtkLayerShell.init_for_window(backdrop)
+                    GtkLayerShell.set_namespace(backdrop, "muisland-outside-click")
+                    GtkLayerShell.set_layer(backdrop, GtkLayerShell.Layer.OVERLAY)
+                    GtkLayerShell.set_monitor(backdrop, display.get_monitor(index))
+                    GtkLayerShell.set_keyboard_mode(
+                        backdrop, GtkLayerShell.KeyboardMode.NONE
+                    )
+                    GtkLayerShell.set_exclusive_zone(backdrop, 0)
+                    for edge in (
+                        GtkLayerShell.Edge.TOP,
+                        GtkLayerShell.Edge.BOTTOM,
+                        GtkLayerShell.Edge.LEFT,
+                        GtkLayerShell.Edge.RIGHT,
+                    ):
+                        GtkLayerShell.set_anchor(backdrop, edge, True)
+
+                    def transparent(_widget, context):
+                        context.set_operator(cairo.OPERATOR_SOURCE)
+                        context.set_source_rgba(0, 0, 0, 0)
+                        context.paint()
+                        return True
+
+                    backdrop.connect("draw", transparent)
+                    backdrop.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+                    backdrop.connect(
+                        "button-press-event", lambda *_: (self.close_menu(), True)[1]
+                    )
+                    self.backdrops.append(backdrop)
+            # Map below the menu, then remap the menu above the click surfaces.
+            self.windows["menu"].hide()
+            for backdrop in self.backdrops:
+                backdrop.show_all()
+
+    def watch_outside_click(self):
+        if not self.open:
+            return True
+        try:
+            x, y, buttons = self.pointer_buttons()
+            pressed = buttons & ~self.outside_buttons
+            self.outside_buttons = buttons
+            if self.open and pressed:
+                win = self.windows["menu"]
+                mx, my = win.get_position()
+                width, height = win.get_size()
+                if not (mx <= x < mx + width and my <= y < my + height):
+                    self.close_menu()
+        except (TypeError, AttributeError):
+            pass
+        return True
+
     def show_menu(self):
+        self.prepare_outside_click()
         self.open = True
         self.windows["bubble"].hide()
         self.windows["float"].hide()
@@ -535,6 +630,8 @@ class Shell:
         if not self.open:
             return
         self.open = False
+        for backdrop in self.backdrops:
+            backdrop.hide()
         if not self.service.busy:
             self.service.handle("discard")
         self.fade("menu", False)

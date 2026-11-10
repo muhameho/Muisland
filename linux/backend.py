@@ -397,24 +397,81 @@ def claude_identity(config):
     return value
 
 
+USAGE_ERRORS = {
+    "cache_missing": "Claude usage: no on-disk OAuth cache yet. Open Claude, finish signing in, then save the account again.",
+    "cache_format": "Claude usage: this Linux credential format is not supported. Run muisland --diagnose-usage to identify the format safely.",
+    "cache_invalid": "Claude usage: the saved credential cache could not be decoded. Open Claude and save the account again.",
+    "keyring_missing": "Claude usage: the Claude Safe Storage key is unavailable. Unlock the desktop keyring used by Claude and retry.",
+    "keyring_timeout": "Claude usage: the desktop keyring did not respond. Unlock it; usage will retry automatically.",
+    "decrypt_failed": "Claude usage: the cache could not be decrypted with Claude's Safe Storage key. Keep Claude and Muisland in the same Linux user session.",
+    "token_missing": "Claude usage: no user:profile credential belongs to this account. Open Claude, finish signing in, then save again.",
+    "token_expired": "Claude usage: the on-disk credential has expired. Open Claude so it can refresh the session; usage will retry automatically.",
+    "profile_mismatch": "Claude usage: the saved profile identity changed. Save this account again.",
+}
+
+
+class UsageError(ValueError):
+    def __init__(self, code):
+        self.code = code if code in USAGE_ERRORS else "cache_invalid"
+        super().__init__(USAGE_ERRORS[self.code])
+
+
+def usage_error_message(error, provider="claude"):
+    # Deliberately map exception TYPES / our codes, never response bodies or repr(error).
+    if provider == "codex" and not isinstance(
+        error,
+        (urllib.error.URLError, TimeoutError, subprocess.TimeoutExpired, queue.Empty),
+    ):
+        return "Codex usage unavailable. Check the CLI installation and ChatGPT file session, then save again."
+    if isinstance(error, UsageError):
+        return str(error)
+    if isinstance(error, urllib.error.HTTPError):
+        return {
+            401: "Claude usage: Anthropic rejected this session (HTTP 401). Open Claude, sign in if needed, and save again.",
+            403: "Claude usage: Anthropic denied access to usage for this credential (HTTP 403). Your account snapshot is still saved.",
+            429: "Claude usage: Anthropic requested a pause (HTTP 429). Automatic retry will respect the server limit.",
+        }.get(
+            error.code,
+            "Usage service returned HTTP "
+            + str(error.code)
+            + ". Automatic retry is enabled.",
+        )
+    if isinstance(error, (ssl.SSLError, urllib.error.URLError)):
+        if isinstance(getattr(error, "reason", error), ssl.SSLError):
+            return "Usage connection: TLS certificate verification failed. Check system certificates, clock, and any HTTPS proxy."
+        return "Usage connection failed. Check internet access and proxy settings; automatic retry is enabled."
+    if isinstance(error, (TimeoutError, subprocess.TimeoutExpired, queue.Empty)):
+        return "Usage request timed out. Automatic retry is enabled."
+    return "Usage could not be read. The saved account was kept. Run muisland --diagnose-usage for a private local check."
+
+
 def decrypt_claude_cache(value):
-    encrypted = base64.b64decode(value, validate=True)
+    try:
+        encrypted = base64.b64decode(value, validate=True)
+    except (ValueError, TypeError):
+        raise UsageError("cache_invalid") from None
     if encrypted[:3] not in (b"v10", b"v11"):
-        raise ValueError("Unsupported Claude Linux credential format")
+        raise UsageError("cache_format")
     passwords = [b"peanuts"] if encrypted[:3] == b"v10" else []
     if encrypted[:3] == b"v11":
+        # Scope every lookup to Claude; never enumerate other apps' secrets.
         for application in ("claude", "Claude", "claude-desktop"):
-            result = subprocess.run(
-                ["secret-tool", "lookup", "application", application],
-                capture_output=True,
-                timeout=10,
-            )
-            if result.stdout.strip():
-                passwords.append(result.stdout.strip())
+            for schema in (
+                "chrome_libsecret_os_crypt_password_v2",
+                "chrome_libsecret_os_crypt_password_v1",
+                None,
+            ):
+                command = ["secret-tool", "lookup", "application", application]
+                if schema:
+                    command += ["xdg:schema", schema]
+                try:
+                    result = subprocess.run(command, capture_output=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    raise UsageError("keyring_timeout") from None
+                if result.stdout.strip() and result.stdout.strip() not in passwords:
+                    passwords.append(result.stdout.strip())
         if not passwords:
-            raise ValueError(
-                "Claude Safe Storage key is unavailable in your unlocked desktop keyring"
-            )
+            raise UsageError("keyring_missing")
     for password in passwords:
         try:
             key = hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", 1, 16)
@@ -422,51 +479,106 @@ def decrypt_claude_cache(value):
             plain = decoder.update(encrypted[3:]) + decoder.finalize()
             unpad = padding.PKCS7(128).unpadder()
             plain = unpad.update(plain) + unpad.finalize()
-            # Chromium Linux caches can prefix a 32-byte host digest.
             for candidate in (plain, plain[32:]):
                 try:
-                    return json.loads(candidate)
+                    cache = json.loads(candidate)
+                    if isinstance(cache, dict):
+                        return cache
                 except (ValueError, UnicodeDecodeError):
                     pass
         except ValueError:
             continue
-    raise ValueError(
-        "Claude session encryption is not supported by this Linux build; no credential was modified"
-    )
+    raise UsageError("decrypt_failed")
 
 
 def claude_token(config):
     account = claude_identity(config)
+    errors = []
+    expired = False
+    found = False
+    decoded = False
     for field in AUTH_KEYS[:2]:
-        if not isinstance(config.get(field), str):
+        if not isinstance(config.get(field), str) or not config[field]:
             continue
-        cache = decrypt_claude_cache(config[field])
-        for key, value in cache.items():
-            if (
+        found = True
+        try:
+            cache = decrypt_claude_cache(config[field])
+        except UsageError as error:
+            errors.append(error)
+            continue
+        decoded = True
+        # Like Windows, prefer the least broadly scoped matching credential.
+        for key, value in sorted(cache.items(), key=lambda item: len(item[0])):
+            if not (
                 key.startswith("acct:" + account + "|")
                 and ":https://api.anthropic.com:" in key
                 and "user:profile"
                 in key.split(":https://api.anthropic.com:", 1)[1].split()
                 and isinstance(value, dict)
             ):
-                token = value.get("token")
-                expires = value.get("expiresAt")
-                if (
-                    isinstance(expires, (int, float))
-                    and (expires / 1000 if expires > 100_000_000_000 else expires)
-                    < time.time() + 15
-                ):
-                    continue
-                if (
-                    isinstance(token, str)
-                    and 0 < len(token) < 16384
-                    and "\n" not in token
-                    and "\r" not in token
-                ):
-                    return token, str(value.get("subscriptionType", "Claude"))[:32]
-    raise ValueError(
-        "No usage credential belongs to this Claude profile. Sign in and save it again."
-    )
+                continue
+            token = value.get("token")
+            expires = value.get("expiresAt")
+            if isinstance(expires, str):
+                try:
+                    expires = datetime.datetime.fromisoformat(
+                        expires.replace("Z", "+00:00")
+                    ).timestamp()
+                except ValueError:
+                    expires = None
+            if (
+                isinstance(expires, (int, float))
+                and (expires / 1000 if expires > 100_000_000_000 else expires)
+                < time.time() + 15
+            ):
+                expired = True
+                continue
+            if (
+                isinstance(token, str)
+                and 0 < len(token) < 16384
+                and "\n" not in token
+                and "\r" not in token
+            ):
+                return token, str(value.get("subscriptionType", "Claude"))[:32]
+    if expired:
+        raise UsageError("token_expired")
+    if errors and not decoded:
+        raise errors[0]
+    raise UsageError("token_missing" if found else "cache_missing")
+
+
+def claude_diagnostics():
+    # Fixed metadata only: never account IDs, paths, tokens, cache contents or keys.
+    report = {"provider": "claude", "profile_found": False, "fields": {}}
+    try:
+        config = claude_config()
+        report["profile_found"] = True
+        report["account_identity_present"] = bool(config.get("lastKnownAccountUuid"))
+        for field in AUTH_KEYS[:2]:
+            value = config.get(field)
+            entry = {"present": value is not None, "type": type(value).__name__}
+            if isinstance(value, str):
+                try:
+                    prefix = base64.b64decode(value, validate=True)[:3]
+                    entry["format"] = (
+                        prefix.decode()
+                        if len(prefix) == 3
+                        and prefix[:1] == b"v"
+                        and prefix[1:].isdigit()
+                        else "unrecognized"
+                    )
+                except (ValueError, UnicodeError):
+                    entry["format"] = "invalid_base64"
+            report["fields"][field] = entry
+        claude_token(config)
+        report["credential_status"] = "ready_for_usage_request"
+    except UsageError as error:
+        report["credential_status"] = error.code
+    except FileNotFoundError:
+        report["credential_status"] = "profile_or_secret_tool_missing"
+    except Exception:
+        report["credential_status"] = "profile_unreadable"
+    return report
 
 
 def claude_usage(config):
@@ -767,7 +879,7 @@ class Service:
                         else claude_identity(auth["config"])
                     )
                     if saved_identity != row.get("identity"):
-                        raise ValueError("Profile identity changed; save it again")
+                        raise UsageError("profile_mismatch")
                     if provider == "codex":
                         try:
                             fresh = json.loads(
@@ -805,9 +917,7 @@ class Service:
                     )
                 except Exception as e:
                     # Never expose protocol payloads, response bodies, or credentials.
-                    self.errors[key] = (
-                        "Usage unavailable. Check the session and network, then save again if needed."
-                    )
+                    self.errors[key] = usage_error_message(e, provider)
                     delay = 120
                     if isinstance(e, urllib.error.HTTPError):
                         if e.code in (401, 403):

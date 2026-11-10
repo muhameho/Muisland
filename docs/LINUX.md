@@ -9,7 +9,7 @@ Muisland runs as a desktop application on Linux, with the same Claude/Codex prof
 Download the `.deb` for your architecture and Ubuntu baseline from [the build artifacts](https://github.com/muhameho/Muisland/actions/workflows/build.yml), extract the artifact ZIP, then run:
 
 ```bash
-sudo apt install ./muisland_0.5.1_amd64.deb
+sudo apt install ./muisland_0.5.2_amd64.deb
 ```
 
 Open **Muisland** in your application launcher. Installing with `apt` resolves runtime dependencies. An unlocked desktop Secret Service keyring (GNOME Keyring, or an equivalent provider) is required for encrypted profiles. Installing a keyring package does not silently unlock or migrate an existing keyring.
@@ -41,7 +41,7 @@ sudo apt install python3 python3-gi python3-gi-cairo python3-cryptography \
 
 Other distributions need Python 3.10+, PyGObject with Cairo, GTK 3, WebKitGTK 4.1 (4.0 also accepted by the runtime), Python cryptography, libsecret's `secret-tool`, and a desktop Secret Service provider. Native layer-shell desktops additionally need the GTK Layer Shell introspection typelib. Distribution package names differ; the Ubuntu package cannot be installed with Fedora/Arch package managers. Use **linux-any** on those families. The compiled x86-64 archive remains available for glibc systems; **linux-any** is the option for musl systems such as Alpine.
 
-Extract `muisland-0.5.1-linux-any.tar.gz`, open a terminal in its folder, then:
+Extract `muisland-0.5.2-linux-any.tar.gz`, open a terminal in its folder, then:
 
 ```bash
 ./muisland --check-env
@@ -109,3 +109,16 @@ The repository also contains isolated Secret Service and headless Sway test scri
 The automated matrix exercises real distro packages and isolated graphical sessions. It does not establish that every derivative, historical release, GPU driver, or desktop shell is supported. GNOME/KDE/Xfce/Cinnamon/MATE/Budgie on X11 or XWayland use the same GTK integration; native Wayland placement additionally requires the compositor's layer-shell protocol. Non-Linux systems and Linux systems missing Python 3.10+/GTK3/WebKitGTK are outside this runtime's requirements.
 
 The **linux-any** package has no CPU-specific launcher, but each target still needs native dependencies from its own distribution. Hosted container tests currently run on x86-64. Other architectures are enabled by this packaging design and are not claimed as separately tested hardware.
+
+
+## Claude usage diagnostics on Ubuntu
+
+Saving a profile and reading its quota are separate operations. A usage error does not mean the saved login was deleted. The card now distinguishes local cache/keyring problems, expired sessions, network/TLS failures, and HTTP 401/403/429 without exposing service response bodies.
+
+```bash
+muisland --diagnose-usage
+```
+
+This command performs a local Claude-format check only. It prints fixed metadata: whether the profile/identity fields exist, the cache format marker (for example v10/v11), and whether a matching usage credential can be decoded. It never prints account IDs, paths, OAuth tokens, cache plaintext, or Safe Storage keys, and makes no network request. Sharing this report is enough to identify many Linux-specific failures; do not share config.json or auth tokens.
+
+The expanded island closes on an outside button press, not on pointer-driven focus loss. X11/XWayland checks button transitions; native layer-shell uses a transparent click surface beneath the menu. Moving the pointer outside the menu keeps it open.

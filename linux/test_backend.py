@@ -271,6 +271,101 @@ class LinuxBackendTests(unittest.TestCase):
                 service.handle("save", {"slot": 1, "confirmed": True})
             close.assert_not_called()
 
+    def encrypt_cache(self, value, prefix=b"v10", password=b"peanuts"):
+        key = hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", 1, 16)
+        pad = padding.PKCS7(128).padder()
+        data = pad.update(backend.encoded(value)) + pad.finalize()
+        cipher = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
+        return base64.b64encode(
+            prefix + cipher.update(data) + cipher.finalize()
+        ).decode()
+
+    def test_new_cache_failure_does_not_hide_valid_legacy_usage_token(self):
+        cache = {
+            "acct:mine|x:https://api.anthropic.com:user:profile": {"token": "sample"}
+        }
+        config = {
+            "lastKnownAccountUuid": "mine",
+            "oauth:tokenCacheV2": base64.b64encode(b"v20unsupported").decode(),
+            "oauth:tokenCache": self.encrypt_cache(cache),
+        }
+        self.assertEqual(backend.claude_token(config)[0], "sample")
+        config["lastKnownAccountUuid"] = "different"
+        with self.assertRaises(backend.UsageError) as error:
+            backend.claude_token(config)
+        self.assertEqual(error.exception.code, "token_missing")
+
+    def test_v11_secret_lookup_is_scoped_to_claude_and_decrypts(self):
+        cache = {
+            "acct:mine|x:https://api.anthropic.com:user:profile": {"token": "sample"}
+        }
+        value = self.encrypt_cache(cache, b"v11", b"sample-safe-storage")
+
+        def lookup(command, **kwargs):
+            self.assertEqual(command[:3], ["secret-tool", "lookup", "application"])
+            self.assertIn(command[3], ("claude", "Claude", "claude-desktop"))
+            return type("Result", (), {"stdout": b"sample-safe-storage\n"})()
+
+        with patch.object(backend.subprocess, "run", side_effect=lookup):
+            self.assertEqual(
+                backend.claude_token(
+                    {"lastKnownAccountUuid": "mine", "oauth:tokenCacheV2": value}
+                )[0],
+                "sample",
+            )
+
+    def test_expired_iso_token_is_not_sent(self):
+        value = self.encrypt_cache(
+            {
+                "acct:mine|x:https://api.anthropic.com:user:profile": {
+                    "token": "sample",
+                    "expiresAt": "2000-01-01T00:00:00Z",
+                }
+            }
+        )
+        with self.assertRaises(backend.UsageError) as error:
+            backend.claude_token(
+                {"lastKnownAccountUuid": "mine", "oauth:tokenCache": value}
+            )
+        self.assertEqual(error.exception.code, "token_expired")
+
+    def test_usage_errors_and_diagnostics_never_export_credentials(self):
+        from urllib.error import HTTPError
+
+        for error in (
+            ValueError("do-not-expose-token"),
+            HTTPError(
+                "https://api.anthropic.com/api/oauth/usage",
+                403,
+                "do-not-expose-token",
+                {},
+                None,
+            ),
+        ):
+            message = backend.usage_error_message(error)
+            self.assertNotIn("do-not-expose-token", message)
+        self.assertIn(
+            "HTTP 403",
+            backend.usage_error_message(
+                HTTPError("https://api.anthropic.com", 403, "", {}, None)
+            ),
+        )
+        config = {
+            "lastKnownAccountUuid": "private-account-id",
+            "oauth:tokenCache": self.encrypt_cache(
+                {
+                    "acct:private-account-id|x:https://api.anthropic.com:user:profile": {
+                        "token": "private-token"
+                    }
+                }
+            ),
+        }
+        with patch.object(backend, "claude_config", return_value=config):
+            report = backend.claude_diagnostics()
+        self.assertEqual(report["credential_status"], "ready_for_usage_request")
+        self.assertNotIn("private-account-id", json.dumps(report))
+        self.assertNotIn("private-token", json.dumps(report))
+
 
 if __name__ == "__main__":
     unittest.main()

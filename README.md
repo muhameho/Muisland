@@ -129,7 +129,7 @@ bash build.sh
 ./target/release/muisland
 ```
 
-To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.1_<architecture>.deb` using `sudo apt install ./muisland_0.5.1_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
+To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.2_<architecture>.deb` using `sudo apt install ./muisland_0.5.2_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
 
 - **X11:** floating placement, corner clamping, dragging, and an independent hover window.
 - **Wayland sessions with XWayland:** the port selects the X11 backend when `DISPLAY` is available, retaining those placement controls.
