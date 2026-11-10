@@ -5,11 +5,16 @@ WORKDIR /app
 COPY linux/dependencies.sh /app/linux/dependencies.sh
 RUN bash /app/linux/dependencies.sh --install
 RUN . /etc/os-release && case "$ID" in \
-    fedora) dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon sway tar gzip coreutils dejavu-sans-fonts ;; \
-    arch) pacman -S --needed --noconfirm xorg-server-xvfb xorg-xauth dbus sway tar gzip ttf-dejavu ;; \
-    opensuse-tumbleweed) zypper --non-interactive install xorg-x11-server-Xvfb xauth dbus-1 dbus-1-tools sway tar gzip dejavu-fonts ;; \
-    alpine) apk add xvfb xauth dbus sway font-dejavu ;; \
+    fedora) dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon sway libcap tar gzip coreutils dejavu-sans-fonts ;; \
+    arch) pacman -S --needed --noconfirm xorg-server-xvfb xorg-xauth dbus sway libcap tar gzip ttf-dejavu ;; \
+    opensuse-tumbleweed) zypper --non-interactive install xorg-x11-server-Xvfb xauth dbus-1-daemon dbus-1-tools sway libcap-progs tar gzip dejavu-fonts ;; \
+    alpine) apk add xvfb xauth dbus sway libcap-utils font-dejavu ;; \
     *) exit 1 ;; esac
+# Distro sway binaries may request CAP_SYS_NICE at exec, which Docker excludes.
+# This compositor is headless/pixman only: remove its extra privileges in the
+# disposable test image instead of granting host capabilities to the container.
+RUN getcap "$(readlink -f "$(command -v sway)")"; setcap -r "$(readlink -f "$(command -v sway)")" || true
+RUN command -v dbus-run-session
 COPY Cargo.toml README.md ./
 COPY docs ./docs
 COPY linux ./linux
