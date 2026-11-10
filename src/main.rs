@@ -150,6 +150,9 @@ mod island {
         ClaudeTab,
         CodexTab,
         Theme(usize),
+        MenuSlider,
+        FloatSlider,
+        BubbleSlider,
         Back,
         Details(usize),
         Save(usize),
@@ -158,14 +161,8 @@ mod island {
         Prev,
         Next,
         Protect,
-        Smaller,
-        FloatSmaller,
-        FloatLarger,
-        BubbleSmaller,
-        BubbleLarger,
         Remove,
         RemoveConfirm,
-        Larger,
         Circle,
         Motion,
         Rollback,
@@ -234,6 +231,9 @@ mod island {
         focus: Action,
         down: Option<(i32, i32, Action)>,
         drag: bool,
+        slider_drag: Option<Action>,
+        slider_preview: Option<f32>,
+        prefs_scroll: i32,
         mouse_was_down: bool,
         origin: (i32, i32),
         edit: Vec<u16>,
@@ -619,20 +619,21 @@ mod island {
                 add(Action::Remove, 24, 356, 372, 36);
             }
             View::Preferences => {
-                add(Action::Smaller, 264, 126, 38, 36);
-                add(Action::Larger, 352, 126, 38, 36);
-                add(Action::FloatSmaller, 264, 178, 38, 36);
-                add(Action::FloatLarger, 352, 178, 38, 36);
-                add(Action::BubbleSmaller, 264, 230, 38, 36);
-                add(Action::BubbleLarger, 352, 230, 38, 36);
-                add(Action::Circle, 24, 280, 372, 48);
-                add(Action::Motion, 24, 334, 372, 48);
-                add(Action::Rollback, 24, 390, 372, 30);
-                if s.settings.provider == 0 {
-                    add(Action::Recover, 24, 428, 372, 30);
+                for (index, y) in [160, 200].into_iter().enumerate() {
+                    add(Action::Theme(index * 2), 24, y, 182, 34);
+                    add(Action::Theme(index * 2 + 1), 214, y, 182, 34);
                 }
-                add(Action::Back, 24, 466, 170, 34);
-                add(Action::Quit, 206, 466, 190, 34);
+                add(Action::MenuSlider, 154, 254, 140, 30);
+                add(Action::FloatSlider, 154, 300, 140, 30);
+                add(Action::BubbleSlider, 154, 346, 140, 30);
+                add(Action::Circle, 24, 396, 372, 56);
+                add(Action::Motion, 24, 462, 372, 56);
+                add(Action::Rollback, 24, 528, 372, 34);
+                if s.settings.provider == 0 {
+                    add(Action::Recover, 24, 570, 372, 34);
+                }
+                add(Action::Back, 24, 614, 178, 34);
+                add(Action::Quit, 210, 614, 186, 34);
             }
             View::Remove(_, _) => {
                 add(Action::Cancel, 24, 312, 120, 42);
@@ -646,23 +647,18 @@ mod island {
         }
         for button in b.iter_mut().skip(5) {
             button.y += BODY_OFFSET
-                + if matches!(s.view, View::Preferences) {
-                    44
+                - if matches!(s.view, View::Preferences) {
+                    s.prefs_scroll
                 } else {
                     0
                 };
-        }
-        if matches!(s.view, View::Preferences) {
-            for theme in 0..4 {
-                b.push(Button {
-                    action: Action::Theme(theme),
-                    x: 24 + theme as i32 * 95,
-                    y: 128 + BODY_OFFSET,
-                    w: 87,
-                    h: 34,
-                });
+            if matches!(s.view, View::Preferences) {
+                let bottom = (button.y + button.h).min(584);
+                button.y = button.y.max(112);
+                button.h = (bottom - button.y).max(0);
             }
         }
+        b.retain(|button| button.h > 0);
         b
     }
     fn hit(s: &State, x: i32, y: i32) -> Action {
@@ -786,34 +782,142 @@ mod island {
     }
 
     unsafe fn toggle(dc: Dc, s: &State, a: Action, y: i32, label: &str, value: bool) {
+        let tall = matches!(a, Action::Circle | Action::Motion);
+        let h = if tall { 56 } else { 48 };
         panel(
             dc,
             24,
             y,
             372,
-            48,
-            16,
-            mix(panel_color(), 0x00413532, hot(s, a)),
+            h,
+            17,
+            mix(panel_color(), button_color(), hot(s, a) * 0.5),
         );
-        text(dc, 38, y + 16, 13, 500, label, white(), 280);
+        text(
+            dc,
+            39,
+            y + (h - 16) / 2,
+            if tall { 12 } else { 13 },
+            400,
+            label,
+            white(),
+            284,
+        );
         panel(
             dc,
-            340,
-            y + 15,
-            40,
-            18,
-            9,
-            if value { accent() } else { 0x00574744 },
+            344,
+            y + (h - 20) / 2,
+            36,
+            20,
+            10,
+            if value { accent() } else { button_color() },
         );
         panel(
             dc,
-            if value { 361 } else { 342 },
-            y + 17,
+            if value { 363 } else { 347 },
+            y + (h - 14) / 2,
             14,
             14,
             7,
             if value { bg() } else { white() },
         );
+    }
+    fn button_color() -> u32 {
+        match ACTIVE_THEME.with(|v| v.get()) {
+            1 => 0x004B3727,
+            2 => 0x00393049,
+            3 => 0x00383838,
+            _ => 0x003B2B29,
+        }
+    }
+    fn slider_bounds(action: Action) -> Option<(f32, f32)> {
+        match action {
+            Action::MenuSlider => Some((0.75, 1.6)),
+            Action::FloatSlider => Some((0.6, 1.8)),
+            Action::BubbleSlider => Some((0.85, 1.6)),
+            _ => None,
+        }
+    }
+    fn slider_value(s: &State, action: Action) -> f32 {
+        if s.slider_drag == Some(action) {
+            if let Some(value) = s.slider_preview {
+                return value;
+            }
+        }
+        match action {
+            Action::MenuSlider => s.settings.menu_scale,
+            Action::FloatSlider => s.settings.float_scale,
+            Action::BubbleSlider => s.settings.bubble_scale,
+            _ => 1.,
+        }
+    }
+    fn slider_from_x(action: Action, x: i32) -> f32 {
+        let (lo, hi) = slider_bounds(action).unwrap();
+        let value = lo + ((x - 164) as f32 / 118.).clamp(0., 1.) * (hi - lo);
+        ((value / 0.05).round() * 0.05).clamp(lo, hi)
+    }
+    fn set_slider(s: &mut State, action: Action, value: f32) {
+        let Some((lo, hi)) = slider_bounds(action) else {
+            return;
+        };
+        let value = value.clamp(lo, hi);
+        match action {
+            Action::MenuSlider => s.settings.menu_scale = value,
+            Action::FloatSlider => s.settings.float_scale = value,
+            Action::BubbleSlider => s.settings.bubble_scale = value,
+            _ => {}
+        }
+    }
+    unsafe fn size_slider(dc: Dc, s: &State, action: Action, cy: i32, label: &str) {
+        let (lo, hi) = slider_bounds(action).unwrap();
+        let value = slider_value(s, action);
+        let position = 164 + (118. * ((value - lo) / (hi - lo)).clamp(0., 1.)).round() as i32;
+        text(dc, 24, cy - 7, 12, 400, label, white(), 135);
+        panel(dc, 164, cy - 3, 118, 6, 3, button_color());
+        panel(dc, 164, cy - 3, (position - 164).max(1), 6, 3, accent());
+        let radius = 9 + hot(s, action).round() as i32;
+        panel(
+            dc,
+            position - radius,
+            cy - radius,
+            radius * 2,
+            radius * 2,
+            radius,
+            mix(0x00D7D4DC, white(), hot(s, action) * 0.5),
+        );
+        text(
+            dc,
+            360,
+            cy - 6,
+            10,
+            400,
+            &format!("{}%", (value * 100.).round() as i32),
+            accent(),
+            40,
+        );
+    }
+    unsafe fn theme_card(dc: Dc, s: &State, index: usize, x: i32, y: i32) {
+        let selected = s.settings.theme == index;
+        let fill = mix(button_color(), white(), hot(s, Action::Theme(index)) * 0.06);
+        panel(
+            dc,
+            x,
+            y,
+            182,
+            34,
+            12,
+            if selected {
+                mix(fill, accent(), 0.75)
+            } else {
+                fill
+            },
+        );
+        if selected {
+            panel(dc, x + 1, y + 1, 180, 32, 11, fill);
+        }
+        let dot = [0x00FFB2C3, 0x00FFC67F, 0x0096B3FF, 0x00EAE3E1][index];
+        panel(dc, x + 9, y + 13, 9, 9, 4, dot);
+        text(dc, x + 26, y + 10, 11, 500, theme_name(index), white(), 146);
     }
     unsafe fn quota(dc: Dc, x: i32, y: i32, width: i32, label: &str, window: Option<&Window>) {
         let now = accounts::now();
@@ -1187,61 +1291,34 @@ mod island {
                 }
             }
             View::Preferences => {
-                text(dc, 24, 78, 24, 600, "Make it yours.", white(), 370);
+                text(dc, 24, 88, 26, 600, "Make it yours.", white(), 372);
                 text(
                     dc,
-                    25,
-                    109,
+                    24,
+                    123,
                     12,
                     400,
                     "Independent sizes · saved on this device",
                     muted(),
-                    370,
+                    372,
                 );
-                text(dc, 26, 181, 13, 600, "Menu size", white(), 210);
-                button(dc, s, Action::Smaller, 264, 170, 38, 36, "−", false);
-                text(
-                    dc,
-                    308,
-                    181,
-                    12,
-                    600,
-                    &format!("{}%", (s.settings.menu_scale * 100.).round() as i32),
-                    white(),
-                    44,
-                );
-                button(dc, s, Action::Larger, 352, 170, 38, 36, "+", false);
-                text(dc, 26, 233, 13, 600, "Floating island size", white(), 220);
-                button(dc, s, Action::FloatSmaller, 264, 222, 38, 36, "−", false);
-                text(
-                    dc,
-                    308,
-                    233,
-                    12,
-                    600,
-                    &format!("{}%", (s.settings.float_scale * 100.).round() as i32),
-                    white(),
-                    44,
-                );
-                button(dc, s, Action::FloatLarger, 352, 222, 38, 36, "+", false);
-                text(dc, 26, 285, 13, 600, "Hover bubble size", white(), 220);
-                button(dc, s, Action::BubbleSmaller, 264, 274, 38, 36, "−", false);
-                text(
-                    dc,
-                    308,
-                    285,
-                    12,
-                    600,
-                    &format!("{}%", (s.settings.bubble_scale * 100.).round() as i32),
-                    white(),
-                    44,
-                );
-                button(dc, s, Action::BubbleLarger, 352, 274, 38, 36, "+", false);
+                for index in 0..4 {
+                    theme_card(
+                        dc,
+                        s,
+                        index,
+                        24 + (index % 2) as i32 * 190,
+                        160 + (index / 2) as i32 * 40,
+                    );
+                }
+                size_slider(dc, s, Action::MenuSlider, 269, "Menu size");
+                size_slider(dc, s, Action::FloatSlider, 315, "Floating size");
+                size_slider(dc, s, Action::BubbleSlider, 361, "Hover bubble size");
                 toggle(
                     dc,
                     s,
                     Action::Circle,
-                    324,
+                    396,
                     "Circle with usage ring",
                     s.settings.circle,
                 );
@@ -1249,7 +1326,7 @@ mod island {
                     dc,
                     s,
                     Action::Motion,
-                    378,
+                    462,
                     "Reduce motion",
                     s.settings.reduced_motion,
                 );
@@ -1258,9 +1335,9 @@ mod island {
                     s,
                     Action::Rollback,
                     24,
-                    434,
+                    528,
                     372,
-                    30,
+                    34,
                     "Restore previous sign-in",
                     false,
                 );
@@ -1270,37 +1347,15 @@ mod island {
                         s,
                         Action::Recover,
                         24,
-                        472,
+                        570,
                         372,
-                        30,
+                        34,
                         "Recover local backup to folder",
                         false,
                     );
-                } else {
-                    text(
-                        dc,
-                        24,
-                        480,
-                        11,
-                        400,
-                        "Codex project files are not moved or restored.",
-                        muted(),
-                        372,
-                    );
                 }
-
-                button(dc, s, Action::Back, 24, 510, 170, 34, "Back", false);
-                button(
-                    dc,
-                    s,
-                    Action::Quit,
-                    206,
-                    510,
-                    190,
-                    34,
-                    "Quit Muisland",
-                    false,
-                );
+                button(dc, s, Action::Back, 24, 614, 178, 34, "Back", false);
+                button(dc, s, Action::Quit, 210, 614, 186, 34, "Quit", false);
             }
             View::Remove(_, name) => {
                 text(dc, 24, 89, 24, 600, "Remove this account?", white(), 372);
@@ -1585,15 +1640,39 @@ mod island {
                 if let Some(previous) = &s.previous {
                     let saved = SaveDC(source.dc);
                     IntersectClipRect(source.dc, 0, (58 + BODY_OFFSET) * 2, lw * 2, lh * 2);
-                    SetViewportOrgEx(source.dc, outgoing * 2, BODY_OFFSET * 2, null_mut());
+                    if matches!(previous, View::Preferences) {
+                        IntersectClipRect(source.dc, 0, 112 * 2, lw * 2, 584 * 2);
+                    }
+                    SetViewportOrgEx(
+                        source.dc,
+                        outgoing * 2,
+                        (BODY_OFFSET
+                            - if matches!(previous, View::Preferences) {
+                                s.prefs_scroll
+                            } else {
+                                0
+                            })
+                            * 2,
+                        null_mut(),
+                    );
                     draw_view(source.dc, s, previous);
                     RestoreDC(source.dc, saved);
                 }
                 let saved = SaveDC(layer.dc);
+                if matches!(s.view, View::Preferences) {
+                    IntersectClipRect(layer.dc, 0, 112 * 2, lw * 2, 584 * 2);
+                }
                 SetViewportOrgEx(
                     layer.dc,
                     incoming * 2,
-                    BODY_OFFSET * 2 + ((1. - s.reveal) * 12.) as i32 * 2,
+                    (BODY_OFFSET
+                        - if matches!(s.view, View::Preferences) {
+                            s.prefs_scroll
+                        } else {
+                            0
+                        })
+                        * 2
+                        + ((1. - s.reveal) * 12.) as i32 * 2,
                     null_mut(),
                 );
                 draw_view(layer.dc, s, &s.view);
@@ -1622,21 +1701,6 @@ mod island {
                         AlphaFormat: 0,
                     },
                 );
-                if matches!(s.view, View::Preferences) && s.transition > 0.9 {
-                    for theme in 0..4 {
-                        button(
-                            source.dc,
-                            s,
-                            Action::Theme(theme),
-                            24 + theme as i32 * 95,
-                            128 + BODY_OFFSET,
-                            87,
-                            34,
-                            theme_name(theme),
-                            s.settings.theme == theme,
-                        );
-                    }
-                }
                 if lh > 500 {
                     let status = if !s.status.is_empty() {
                         s.status.as_str()
@@ -1661,7 +1725,21 @@ mod island {
                         EH as i32 - 30,
                         11,
                         400,
-                        status,
+                        &format!(
+                            "Muisland {} · {}",
+                            env!("CARGO_PKG_VERSION"),
+                            if matches!(s.view, View::Preferences) && s.status.is_empty() {
+                                if s.preview {
+                                    "Preview · sample data"
+                                } else if s.settings.provider == 1 {
+                                    "Codex · automatic usage"
+                                } else {
+                                    "Claude · automatic usage"
+                                }
+                            } else {
+                                status
+                            }
+                        ),
                         if s.error { 0x009BA7F0 } else { muted() },
                         370,
                     );
@@ -2116,6 +2194,11 @@ mod island {
         !s.open || (y < 58 && x < EW as i32 - 100)
     }
     fn navigate(s: &mut State, next: View, _backwards: bool) {
+        if matches!(next, View::Preferences) && !matches!(s.view, View::Preferences) {
+            s.prefs_scroll = 0;
+        }
+        s.slider_drag = None;
+        s.slider_preview = None;
         s.previous = Some(s.view.clone());
         s.view = next;
         s.transition = if s.settings.reduced_motion { 1. } else { 0. };
@@ -2504,6 +2587,7 @@ mod island {
                     s.hover_levels.clear();
                 }
             }
+            Action::MenuSlider | Action::FloatSlider | Action::BubbleSlider => {}
             Action::Theme(index) => {
                 s.settings.theme = index.min(3);
                 persist(s);
@@ -2607,30 +2691,6 @@ mod island {
             }
             Action::Protect => {
                 s.settings.protect_local = !s.settings.protect_local;
-                persist(s)
-            }
-            Action::Smaller => {
-                s.settings.menu_scale = (s.settings.menu_scale - 0.1).max(0.75);
-                persist(s)
-            }
-            Action::Larger => {
-                s.settings.menu_scale = (s.settings.menu_scale + 0.1).min(1.6);
-                persist(s)
-            }
-            Action::BubbleSmaller => {
-                s.settings.bubble_scale = (s.settings.bubble_scale - 0.1).max(0.85);
-                persist(s);
-            }
-            Action::BubbleLarger => {
-                s.settings.bubble_scale = (s.settings.bubble_scale + 0.1).min(1.6);
-                persist(s);
-            }
-            Action::FloatSmaller => {
-                s.settings.float_scale = (s.settings.float_scale - 0.1).max(0.6);
-                persist(s)
-            }
-            Action::FloatLarger => {
-                s.settings.float_scale = (s.settings.float_scale + 0.1).min(1.8);
                 persist(s)
             }
             Action::Circle => {
@@ -2797,6 +2857,7 @@ mod island {
                 if mouse_down
                     && !s.mouse_was_down
                     && s.down.is_none()
+                    && s.slider_drag.is_none()
                     && !s.drag
                     && (s.open || s.peek)
                 {
@@ -3098,6 +3159,14 @@ mod island {
             WM_LBUTTONDOWN => {
                 let (x, y) = point(lp, s.scale);
                 let action = hit(s, x, y);
+                if slider_bounds(action).is_some() {
+                    s.slider_drag = Some(action);
+                    s.slider_preview = Some(slider_from_x(action, x));
+                    s.focus = action;
+                    SetCapture(hwnd);
+                    InvalidateRect(hwnd, null_mut(), 0);
+                    return 0;
+                }
                 s.down = Some((x, y, action));
                 s.drag = false;
                 s.focus = Action::None;
@@ -3111,6 +3180,12 @@ mod island {
                 0
             }
             WM_MOUSEMOVE => {
+                if let Some(action) = s.slider_drag {
+                    let (x, _) = point(lp, s.scale);
+                    s.slider_preview = Some(slider_from_x(action, x));
+                    InvalidateRect(hwnd, null_mut(), 0);
+                    return 0;
+                }
                 if let Some((dx, dy, _)) = s.down {
                     let (x, y) = point(lp, s.scale);
                     if drag_zone(s, dx, dy) && ((x - dx).abs() > 4 || (y - dy).abs() > 4 || s.drag)
@@ -3128,6 +3203,15 @@ mod island {
                 0
             }
             WM_LBUTTONUP => {
+                if let Some(action) = s.slider_drag.take() {
+                    let (x, _) = point(lp, s.scale);
+                    set_slider(s, action, slider_from_x(action, x));
+                    s.slider_preview = None;
+                    ReleaseCapture();
+                    persist(s);
+                    InvalidateRect(hwnd, null_mut(), 0);
+                    return 0;
+                }
                 let down = s.down.take();
                 let drag = s.drag;
                 ReleaseCapture();
@@ -3141,8 +3225,19 @@ mod island {
                 0
             }
             WM_CAPTURECHANGED => {
+                s.slider_drag = None;
+                s.slider_preview = None;
                 s.down = None;
                 s.drag = false;
+                0
+            }
+            WM_MOUSEWHEEL => {
+                if s.open && matches!(s.view, View::Preferences) && s.slider_drag.is_none() {
+                    let delta = ((wp >> 16) as u16) as i16;
+                    s.prefs_scroll =
+                        (s.prefs_scroll - (delta as f32 / 120. * 40.).round() as i32).clamp(0, 120);
+                    InvalidateRect(hwnd, null_mut(), 0);
+                }
                 0
             }
             WM_RBUTTONUP => {
@@ -3175,7 +3270,24 @@ mod island {
             WM_KEYDOWN => {
                 let control = GetKeyState(0x11) < 0;
                 let key = wp as u32;
-                if s.edit_focus && control && key == 0x41 {
+                if matches!(s.view, View::Preferences) && [0x21, 0x22].contains(&key) {
+                    s.prefs_scroll =
+                        (s.prefs_scroll + if key == 0x22 { 100 } else { -100 }).clamp(0, 120);
+                } else if matches!(s.view, View::Preferences)
+                    && slider_bounds(s.focus).is_some()
+                    && [0x25, 0x27, 0x24, 0x23].contains(&key)
+                {
+                    let action = s.focus;
+                    let (lo, hi) = slider_bounds(action).unwrap();
+                    let value = match key {
+                        0x24 => lo,
+                        0x23 => hi,
+                        0x25 => slider_value(s, action) - 0.05,
+                        _ => slider_value(s, action) + 0.05,
+                    };
+                    set_slider(s, action, value);
+                    persist(s);
+                } else if s.edit_focus && control && key == 0x41 {
                     s.selected = true;
                 } else if s.edit_focus && control && key == 0x56 {
                     paste(hwnd, s);
@@ -3308,6 +3420,9 @@ mod island {
             focus: Action::None,
             down: None,
             drag: false,
+            slider_drag: None,
+            slider_preview: None,
+            prefs_scroll: 0,
             mouse_was_down: false,
             origin: (0, 0),
             edit: Vec::new(),
@@ -3602,7 +3717,8 @@ mod island {
             assert_eq!(hit(&s, 110, 80), Action::ClaudeTab);
             assert_eq!(hit(&s, 300, 80), Action::CodexTab);
             s.view = View::Preferences;
-            assert_eq!(hit(&s, 160, 189), Action::Theme(1));
+            assert_eq!(hit(&s, 300, 220), Action::Theme(1));
+            assert_eq!(hit(&s, 100, 260), Action::Theme(2));
             s.settings.select_provider(1);
             s.view = View::Home;
             assert!(!buttons(&s).iter().any(|b| b.action == Action::Protect));
@@ -3682,14 +3798,42 @@ mod island {
             assert!(buttons(&s).iter().any(|b| b.action == Action::Add));
         }
         #[test]
+        fn settings_sliders_clamp_and_do_not_change_other_sizes() {
+            let mut s = initial(true, 0., 0);
+            assert!((slider_from_x(Action::MenuSlider, -100) - 0.75).abs() < 0.001);
+            assert!((slider_from_x(Action::MenuSlider, 1000) - 1.6).abs() < 0.001);
+            set_slider(&mut s, Action::FloatSlider, 0.7);
+            assert!((s.settings.float_scale - 0.7).abs() < 0.001);
+            assert_eq!(s.settings.menu_scale, 1.0);
+            assert_eq!(s.settings.bubble_scale, 1.0);
+            s.slider_drag = Some(Action::MenuSlider);
+            s.slider_preview = Some(1.4);
+            assert_eq!(slider_value(&s, Action::MenuSlider), 1.4);
+            assert_eq!(s.settings.menu_scale, 1.0);
+        }
+        #[test]
+        fn settings_scroll_reveals_lower_actions_without_covering_header() {
+            let mut s = initial(true, 0., 0);
+            s.view = View::Preferences;
+            s.reveal = 1.;
+            s.transition = 1.;
+            assert!(!buttons(&s).iter().any(|b| b.action == Action::Quit));
+            s.prefs_scroll = 120;
+            assert!(buttons(&s).iter().any(|b| b.action == Action::Quit));
+            assert_eq!(hit(&s, 110, 80), Action::ClaudeTab);
+            for button in buttons(&s).iter().skip(5) {
+                assert!(button.y >= 112 && button.y + button.h <= 584);
+            }
+        }
+        #[test]
         fn preference_size_controls_are_independent() {
             let mut s = initial(true, 0., 0);
             s.view = View::Preferences;
             s.reveal = 1.;
             s.transition = 1.;
-            assert_eq!(hit(&s, 371, 232), Action::Larger);
-            assert_eq!(hit(&s, 371, 284), Action::FloatLarger);
-            assert_eq!(hit(&s, 371, 336), Action::BubbleLarger);
+            assert_eq!(hit(&s, 220, 313), Action::MenuSlider);
+            assert_eq!(hit(&s, 220, 359), Action::FloatSlider);
+            assert_eq!(hit(&s, 220, 405), Action::BubbleSlider);
             s.settings.menu_scale = 1.4;
             s.settings.float_scale = 0.6;
             assert_eq!(s.settings.bubble_scale, 1.0);

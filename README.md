@@ -45,7 +45,7 @@ Keep the circle small and the bubble readable. The card chooses the available si
 
 ![Preferences with independent menu, floating island, and hover bubble sizes](docs/images/preferences.png)
 
-The expanded menu, floating island, and hover bubble each have their own size control. Reduce motion makes transitions immediate.
+Windows and Linux share the same Preferences layout: a two-column theme grid, three independent size sliders, and rounded switch rows. Scroll within Preferences for recovery and other actions. The expanded menu, floating island, and hover bubble each have their own size control. Reduce motion makes transitions immediate.
 
 </details>
 
@@ -129,7 +129,7 @@ bash build.sh
 ./target/release/muisland
 ```
 
-To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.4_<architecture>.deb` using `sudo apt install ./muisland_0.5.4_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
+To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.5_<architecture>.deb` using `sudo apt install ./muisland_0.5.5_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
 
 - **X11:** floating placement, corner clamping, dragging, and an independent hover window.
 - **Wayland sessions with XWayland:** the port selects the X11 backend when `DISPLAY` is available, retaining those placement controls.
