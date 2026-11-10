@@ -732,17 +732,23 @@
           content = `<h1>Account details</h1><p class="subtitle">${a.draft ? "Temporary until a successful Save account" : "Name · up to 32 characters"}</p><input id="accountName" class="name-input" maxlength="32" value="${esc(a.name)}" aria-label="Account name"><div class="quotas">${quota("5h", a.usage?.session)}${quota("7d", a.usage?.weekly)}</div><p class="hint">${a.draft ? "Leaving without saving discards this draft." : "Your sign-in stays on this computer."}</p><button class="wide danger" data-remove="${a.slot}">${a.draft ? "Discard draft" : "Remove account"}</button><div class="row-buttons"><button data-back>Back</button><button class="primary" data-name>${a.draft ? "Save account" : "Save name"}</button></div>`;
         } else if (view === "confirm") {
           let a = data.accounts.find((a) => a.slot === pending.slot);
+          const addingAnother =
+            pending.action === "save" && data.provider === "claude"
+              ? data.accounts.find(
+                  (x) => x.active && x.saved && x.slot !== pending.slot && !a?.active,
+                )
+              : null;
           let title = {
-            save: "Save this account?",
+            save: addingAnother ? "Sign in to another account?" : "Save this account?",
             switch: "Switch account?",
             remove: "Remove this account?",
             rollback: "Restore previous sign-in?",
             recover: "Recover local backup?",
           }[pending.action];
-          content = `<h1>${title}</h1><p class="selected-name">${esc(a?.name || "")}</p><p class="confirm-copy">${pending.action === "remove" ? "The encrypted sign-in is archived locally. Your cloud chats and files are not deleted." : data.provider === "codex" ? "This changes only the Codex file sign-in cache. New CLI sessions use it; restart open Codex sessions to reload. The Desktop host may retain its own login." : pending.action === "recover" ? "Decrypt the latest local checkpoint into a separate folder. Claude’s live files will not be overwritten." : "Claude will close normally and reopen. Local tasks may stop and unsaved work may be lost. Nothing changes until you confirm."}</p><div class="row-buttons"><button data-cancel>Cancel</button><button class="primary" data-confirm>Confirm</button></div>`;
+          content = `<h1>${title}</h1><p class="selected-name">${esc(a?.name || "")}</p><p class="confirm-copy">${pending.action === "remove" ? "The encrypted sign-in is archived locally. Your cloud chats and files are not deleted." : data.provider === "codex" ? "This changes only the Codex file sign-in cache. New CLI sessions use it; restart open Codex sessions to reload. The Desktop host may retain its own login." : pending.action === "recover" ? "Decrypt the latest local checkpoint into a separate folder. Claude’s live files will not be overwritten." : addingAnother ? `Claude is signed in as ${esc(addingAnother.name)}, which is already saved. Claude will close and reopen at its sign-in screen so you can sign in to a different account, then Save again. ${esc(addingAnother.name)} is not signed out. Local tasks may stop and unsaved work may be lost.` : "Claude will close normally and reopen. Local tasks may stop and unsaved work may be lost. Nothing changes until you confirm."}</p><div class="row-buttons"><button data-cancel>Cancel</button><button class="primary" data-confirm>Confirm</button></div>`;
         } else
           content = `<h1>Account status</h1><p class="confirm-copy">${esc(notice)}</p><button class="wide" ${data.error ? "data-retry-storage" : "data-back"}>${data.error ? "Retry keyring" : "Back"}</button>${data.error ? '<button class="wide" data-quit>Quit Muisland</button>' : ""}`;
-        root.innerHTML = `${native ? "" : '<p class="preview-label">Linux interface preview · invented accounts · no native operations</p>'}<section class="surface"><header class="header"><span class="logo">M</span><span class="brand">Muisland</span><button class="icon ${view === "prefs" ? "active" : ""}" data-prefs aria-label="Preferences">⚙</button><button class="icon" data-close aria-label="Collapse">−</button></header><nav class="providers"><button class="${data.provider === "claude" ? "active" : ""}" data-provider="claude">Claude</button><button class="${data.provider === "codex" ? "active" : ""}" data-provider="codex">Codex</button></nav><main class="content ${cls} ${data.busy ? "busy" : ""}">${content}</main><footer class="footer">${data.busy ? "Working on your account…" : data.preview ? "Preview · sample data" : data.provider === "codex" ? "Codex · file-auth profiles · 30s active / 2m others" : "Claude · 30s active / 2m other accounts"}</footer></section>`;
+        root.innerHTML = `${native ? "" : '<p class="preview-label">Linux interface preview · invented accounts · no native operations</p>'}<section class="surface"><header class="header"><span class="logo">M</span><span class="brand">Muisland</span><button class="icon ${view === "prefs" ? "active" : ""}" data-prefs aria-label="Preferences">⚙</button><button class="icon" data-close aria-label="Collapse">−</button></header><nav class="providers"><button class="${data.provider === "claude" ? "active" : ""}" data-provider="claude">Claude</button><button class="${data.provider === "codex" ? "active" : ""}" data-provider="codex">Codex</button></nav><main class="content ${cls} ${data.busy ? "busy" : ""}">${content}</main><footer class="footer">${data.busy ? "Working on your account…" : data.preview ? "Preview · sample data" : data.provider === "codex" ? "Codex · file-auth profiles · 30s active / 2m others" : "Claude · 1m active / 5m other accounts"}</footer></section>`;
       }
       function confirm(action, slot) {
         pending = { action, slot };
@@ -839,6 +845,8 @@
           if (result) {
             notice = result.folder
               ? "Backup recovered to " + result.folder
+              : result.notice
+                ? result.notice
               : op.action === "switch" && data.provider === "codex"
                 ? "Codex sign-in cache changed. Restart existing sessions to reload it."
                 : "";

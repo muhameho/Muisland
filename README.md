@@ -129,7 +129,7 @@ bash build.sh
 ./target/release/muisland
 ```
 
-To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.2_<architecture>.deb` using `sudo apt install ./muisland_0.5.2_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
+To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.3_<architecture>.deb` using `sudo apt install ./muisland_0.5.3_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
 
 - **X11:** floating placement, corner clamping, dragging, and an independent hover window.
 - **Wayland sessions with XWayland:** the port selects the X11 backend when `DISPLAY` is available, retaining those placement controls.
@@ -160,14 +160,17 @@ See the official [authentication](https://learn.chatgpt.com/docs/auth) and [app-
 
 1. Sign in to the desired account in Claude Desktop.
 2. Choose **Save** on the intended slot in Muisland. Use **+ Add account** for another slot.
-3. If Claude is running, review **Close & save**. Muisland requests a normal exit, waits for Claude to stop, captures the sign-in, and reopens Claude.
-4. Click a saved account and choose **Confirm switch** to switch to it.
+3. If Claude is running, review **Close & save**. Muisland closes Claude (including when it is only in the system tray), captures the sign-in, and reopens Claude.
+4. To add a second account, choose **+ Add account → Save account** while the first one is still signed in. Because that account is already saved, Muisland reopens Claude at its sign-in screen instead of saving a duplicate. Sign in to the other account, then choose **Save** again.
+5. Click a saved account and choose **Confirm switch** to switch to it.
+
+**Do not use Claude's own Log out to change accounts.** Log out ends that session on Anthropic's side, so the saved copy stops working and a later switch asks you to sign in again. Step 4 only forgets the sign-in on this computer; the saved session stays valid. Each switch also re-captures the account you are leaving, so its saved copy follows Claude's own session renewals.
 
 **+ Add account** creates a temporary draft. Enter a name and choose **Save account** to capture the Claude sign-in. The new entry becomes permanent only after capture succeeds. Back, Cancel, Escape, or closing the island discards an unfinished draft; saving unrelated preferences cannot accidentally keep it. A confirmed save already running is allowed to finish safely.
 
 Use an account card's **adjustments icon** to rename or remove it. Removing an account archives its encrypted snapshot locally; it does not sign Claude out or delete cloud chats.
 
-Muisland does not force-kill Claude. If Claude remains in the system tray, quit it normally and retry. Finish or save local work before confirming a close or switch.
+After you confirm, Muisland first asks Claude to close normally. On Windows, Claude keeps running in the system tray and accepts no outside quit request, so after a few seconds Muisland ends the remaining Claude Desktop processes itself (never the Claude Code CLI). Finish or save local work before confirming a close or switch, and wait a few seconds after signing in before saving so Claude has written the new session to disk.
 
 **Saved sign-ins are not permanent credentials.** If Claude expires or revokes a session, including after a sign-out, you may need to sign in again and save the account. A local snapshot cannot undo server-side revocation.
 
@@ -265,7 +268,14 @@ Muisland polls rather than streaming updates. Allow the next refresh interval af
 <details>
 <summary><strong>Claude did not close, or is still in the tray</strong></summary>
 
-Muisland requests Claude's normal exit and waits for it to stop. It does not force-kill the app. Quit Claude from its own tray menu, then retry the operation. Save or finish local work first.
+Muisland requests Claude's normal exit and, on Windows, ends the remaining Claude Desktop processes after a few seconds because the tray instance cannot be asked to quit. If Windows refuses even that, quit Claude from its own tray menu and retry. Save or finish local work first.
+
+</details>
+
+<details>
+<summary><strong>Switching asked me to sign in again</strong></summary>
+
+The saved session was ended on Anthropic's side, most often by using Claude's own **Log out** to change accounts, or because the saved copy was much older than Claude's renewed session. Sign in once, choose **Save** on that slot, and from then on add or change accounts through Muisland (see *Using Claude accounts*) instead of Log out.
 
 </details>
 

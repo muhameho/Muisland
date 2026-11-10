@@ -341,19 +341,48 @@ pub fn close_claude_for_save() -> io::Result<()> {
     unsafe {
         EnumWindows(Some(close_window), (&ids as *const Vec<u32>) as LPARAM);
     }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if desktop_processes()?.is_empty() {
-            std::thread::sleep(Duration::from_millis(350));
+    let wait = |limit: Duration| -> io::Result<bool> {
+        let deadline = Instant::now() + limit;
+        loop {
             if desktop_processes()?.is_empty() {
-                return Ok(());
+                std::thread::sleep(Duration::from_millis(350));
+                if desktop_processes()?.is_empty() {
+                    return Ok(true);
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    };
+    if wait(Duration::from_secs(4))? {
+        return Ok(());
+    }
+    // Closing Claude's window only sends it to the system tray, and it accepts no
+    // outside request to quit from there. The user already confirmed the close, so
+    // end what is left instead of asking them to find the tray icon.
+    for _ in 0..3 {
+        end_desktop_processes()?;
+        if wait(Duration::from_secs(3))? {
+            return Ok(());
+        }
+    }
+    Err(io::Error::other("Claude could not be closed. Quit it from its tray icon, then retry. Nothing was saved or changed."))
+}
+fn end_desktop_processes() -> io::Result<()> {
+    use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::*};
+    for (pid, _) in desktop_processes()? {
+        unsafe {
+            let process = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            // A process that already exited cannot be opened; that is the goal.
+            if !process.is_null() {
+                TerminateProcess(process, 0);
+                CloseHandle(process);
             }
         }
-        if Instant::now() >= deadline {
-            return Err(io::Error::other("Claude is still running, possibly in the system tray. Choose File > Exit or Quit Claude, then retry. Muisland did not force-close it or save over your account."));
-        }
-        std::thread::sleep(Duration::from_millis(150));
     }
+    Ok(())
 }
 pub fn claude_running() -> bool {
     desktop_processes().map(|p| !p.is_empty()).unwrap_or(true)
@@ -554,6 +583,7 @@ fn install_snapshot(stage: &Path, dest: &Path, versions: &Path, index: usize) ->
             .as_nanos();
         let previous = versions.join(format!("account-{index}-{stamp}"));
         fs::rename(&dest, &previous)?;
+        prune_versions(versions, index);
         Some(previous)
     } else {
         None
@@ -565,6 +595,74 @@ fn install_snapshot(stage: &Path, dest: &Path, versions: &Path, index: usize) ->
         return Err(error);
     }
     Ok(())
+}
+/// Superseded copies are a safety net, not an archive: keep the newest three per slot.
+fn prune_versions(versions: &Path, index: usize) {
+    let prefix = format!("account-{index}-");
+    let Ok(entries) = fs::read_dir(versions) else {
+        return;
+    };
+    let mut stamps = entries
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let stamp = name.strip_prefix(&prefix)?.parse::<u128>().ok()?;
+            Some((stamp, e.path()))
+        })
+        .collect::<Vec<_>>();
+    stamps.sort();
+    let extra = stamps.len().saturating_sub(3);
+    for (_, path) in stamps.into_iter().take(extra) {
+        let _ = fs::remove_dir_all(path);
+    }
+}
+/// The saved slot, other than `except`, that already holds this Claude account.
+pub fn slot_holding(identity: &str, except: usize) -> Option<usize> {
+    (1..=crate::accounts::MAX_ACCOUNTS)
+        .filter(|slot| *slot != except && saved(*slot))
+        .find(|slot| account_identity(*slot).ok().as_deref() == Some(identity))
+}
+/// Claude renews its session while it runs, so the copy taken at the last Save can
+/// stop working. Re-capture the signed-in account into its own slot before leaving it.
+fn refresh_current_slot(except: usize) {
+    // Requires a usable sign-in on disk, so a signed-out Claude never replaces a good copy.
+    if let Ok(identity) = crate::usage::current_account_identity() {
+        if let Some(slot) = slot_holding(&identity, except) {
+            let _ = capture(slot, &identity);
+        }
+    }
+}
+fn clear_sign_in(dest: &Path) -> io::Result<()> {
+    let mut config: Value = json(serde_json::from_slice(&fs::read(dest.join("config.json"))?))?;
+    let object = config
+        .as_object_mut()
+        .ok_or_else(|| io::Error::other("Invalid Claude config"))?;
+    for key in config_keys() {
+        object.remove(*key);
+    }
+    // "Local State" holds this computer's storage key, not a sign-in; it stays.
+    for item in ["Network", "Local Storage", "Session Storage"] {
+        let path = dest.join(item);
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else if path.is_file() {
+            fs::remove_file(path)?;
+        }
+    }
+    write_atomic(
+        &dest.join("config.json"),
+        &json(serde_json::to_vec_pretty(&config))?,
+    )
+}
+/// Make room for another account without Claude's own Log out, which ends the
+/// session on Anthropic's side and would make the saved copy useless. This only
+/// forgets the sign-in on this computer after refreshing the saved copy.
+pub fn sign_in_another(saved_slot: usize, identity: &str) -> io::Result<()> {
+    check_closed()?;
+    capture(saved_slot, identity)?;
+    let dest = find_claude()?;
+    save_snapshot(&dest, &base()?.join("last-switch-backup"))?;
+    clear_sign_in(&dest)
 }
 pub fn switch(index: usize, protect_local: bool) -> io::Result<()> {
     if is_current(index).unwrap_or(false) {
@@ -583,6 +681,7 @@ pub fn switch(index: usize, protect_local: bool) -> io::Result<()> {
         crate::backup::checkpoint(&dest)?;
         check_closed()?;
     }
+    refresh_current_slot(index);
     let backup = base()?.join("last-switch-backup");
     save_snapshot(&dest, &backup)?;
     if let Err(err) = restore_snapshot(&profile, &dest) {
@@ -689,6 +788,62 @@ mod tests {
         assert_eq!(fs::read(archived.join("auth.bin")).unwrap(), b"old");
         assert!(install_snapshot(&root.join("missing"), &dest, &versions, 1).is_err());
         assert_eq!(fs::read(dest.join("auth.bin")).unwrap(), b"new");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn superseded_copies_are_pruned_per_slot_and_sign_in_is_cleared_locally() {
+        let root = std::env::temp_dir().join(format!(
+            "muisland-prune-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let versions = root.join("versions");
+        for name in [
+            "account-1-10",
+            "account-1-20",
+            "account-1-30",
+            "account-1-40",
+            "account-1-9",
+            "account-12-5",
+            "account-2-1",
+        ] {
+            fs::create_dir_all(versions.join(name)).unwrap();
+        }
+        prune_versions(&versions, 1);
+        let mut left = fs::read_dir(&versions)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "account-1-20",
+                "account-1-30",
+                "account-1-40",
+                "account-12-5",
+                "account-2-1"
+            ]
+        );
+        let claude = root.join("claude");
+        fs::create_dir_all(claude.join("Network")).unwrap();
+        fs::create_dir_all(claude.join("Local Storage").join("leveldb")).unwrap();
+        fs::write(claude.join("Network").join("Cookies"), b"session").unwrap();
+        fs::write(claude.join("Local State"), b"{}").unwrap();
+        fs::write(
+            claude.join("config.json"),
+            br#"{"oauth:tokenCache":"x","lastKnownAccountUuid":"a","theme":"dark"}"#,
+        )
+        .unwrap();
+        clear_sign_in(&claude).unwrap();
+        assert!(!claude.join("Network").exists());
+        assert!(!claude.join("Local Storage").exists());
+        assert!(claude.join("Local State").exists());
+        let config: Value =
+            serde_json::from_slice(&fs::read(claude.join("config.json")).unwrap()).unwrap();
+        assert_eq!(config, serde_json::json!({"theme":"dark"}));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

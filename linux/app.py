@@ -797,11 +797,14 @@ class Shell:
                 value = self.service.handle(action, data)
                 if not self.open and not self.service.busy:
                     self.service.handle("discard")
+                extra = value.get("notice") if isinstance(value, dict) else None
                 value = (
                     value
                     if isinstance(value, dict) and "folder" in value
                     else self.service.state()
                 )
+                if extra:
+                    value["notice"] = extra
                 GLib.idle_add(
                     lambda: (
                         answer(True, value),

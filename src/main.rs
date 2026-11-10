@@ -194,6 +194,8 @@ mod island {
         NeedsClose(Op),
         NeedsSwitch(usize),
         Already(usize),
+        /// Claude reopened signed out locally; the payload is the slot that kept its account.
+        SignIn(usize),
     }
     struct SyncResult {
         generation: u64,
@@ -1366,13 +1368,20 @@ mod island {
             }
             View::Confirm(op) => {
                 let saving = matches!(op, Op::Save(_));
+                // Another slot already holds the signed-in account: this Save adds a new one.
+                let adding = s.settings.provider == 0
+                    && matches!(op, Op::Save(i) if s.active.is_some_and(|active| {
+                        active != *i && s.identities.get(active) != s.identities.get(*i)
+                    }));
                 text(
                     dc,
                     24,
                     89,
                     24,
                     600,
-                    if saving {
+                    if adding {
+                        "Add another account?"
+                    } else if saving {
                         "Close Claude & save?"
                     } else {
                         "Close Claude & switch?"
@@ -1386,6 +1395,8 @@ mod island {
                     142,
                     if s.settings.provider == 1 {
                         "Switch the Codex sign-in cache? New Codex CLI sessions use this account. Restart existing sessions to reload it; the Desktop app may retain its own host login."
+                    } else if adding {
+                        "Claude's current account is already saved. Claude will close and reopen at its sign-in screen so you can add another one. The saved account is not signed out."
                     } else {
                         "Claude Desktop will close. Local tasks may stop and unsaved work may be lost. Nothing closes until you confirm."
                     },
@@ -1412,7 +1423,9 @@ mod island {
                     312,
                     240,
                     42,
-                    if saving {
+                    if adding {
+                        "Close & sign in"
+                    } else if saving {
                         "Close & save"
                     } else {
                         "Close & switch"
@@ -2296,6 +2309,26 @@ mod island {
                 if confirmed {
                     profiles::close_claude_for_save().map_err(|e| e.to_string())?;
                 }
+                // Saving into another slot while this account is already saved means
+                // the user wants to add a different account, not a duplicate.
+                // Re-saving a slot that already holds this account stays a plain save.
+                if let Some(other) = expected
+                    .as_deref()
+                    .filter(|identity| {
+                        profiles::account_identity(slot).ok().as_deref() != Some(*identity)
+                    })
+                    .and_then(|identity| profiles::slot_holding(identity, slot))
+                {
+                    let prepared =
+                        profiles::sign_in_another(other, expected.as_deref().unwrap_or(""));
+                    let opened = launch.open();
+                    prepared.map_err(|e| e.to_string())?;
+                    opened.map_err(|_| {
+                        "Claude is ready for another sign-in but could not reopen. Open Claude manually."
+                            .to_string()
+                    })?;
+                    return Ok(Outcome::SignIn(other));
+                }
                 match op {
                     Op::Save(_) => {
                         profiles::save_and_reopen(slot, expected.as_deref().unwrap_or(""), &launch)
@@ -2928,6 +2961,29 @@ mod island {
                             if s.open {
                                 navigate(s, View::Confirm(op), false);
                                 s.focus = Action::Cancel;
+                            }
+                        }
+                        Ok(Outcome::SignIn(slot)) => {
+                            let name = s
+                                .settings
+                                .accounts
+                                .iter()
+                                .find(|a| a.slot == slot)
+                                .map(|a| a.name.clone())
+                                .unwrap_or_else(|| "Your account".into());
+                            refresh_slots(s);
+                            s.sync_next = 0.;
+                            let visible = s.open;
+                            notice(
+                                s,
+                                "Sign in to the other account",
+                                format!("{name} is already saved and was not signed out. Claude reopened at its sign-in screen: sign in to the other account there, then choose Save again. Avoid Claude's own Log out; it ends a saved session."),
+                                false,
+                            );
+                            if !visible {
+                                s.open = false;
+                                s.previous = None;
+                                s.transition = 1.;
                             }
                         }
                         Ok(Outcome::Done(op, label)) => {

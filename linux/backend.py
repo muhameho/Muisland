@@ -1,6 +1,6 @@
 """Linux platform services. No GUI imports and no credentials in UI state/logs."""
 
-import base64, copy, datetime, hashlib, json, math, os, queue, secrets, shutil, signal, ssl, subprocess, threading, time, urllib.request, urllib.error
+import base64, copy, datetime, email.utils, hashlib, json, math, os, queue, secrets, shutil, signal, sqlite3, ssl, subprocess, threading, time, urllib.parse, urllib.request, urllib.error
 
 try:
     import tomllib
@@ -143,6 +143,20 @@ class Vault:
         if self.exists(name):
             previous = "saved-versions/" + str(time.time_ns()) + "-" + Path(name).name
             atomic(self.root / previous, (self.root / name).read_bytes())
+            # Safety net, not an archive; switching refreshes profiles often.
+            suffix = "-" + Path(name).name
+            older = sorted(
+                (
+                    path
+                    for path in (self.root / "saved-versions").iterdir()
+                    if path.name.endswith(suffix)
+                    and path.name[: -len(suffix)].isdigit()
+                    and path.is_file()
+                ),
+                key=lambda path: int(path.name[: -len(suffix)]),
+            )
+            for path in older[:-3]:
+                path.unlink()
         self.write(name, data)
 
     def read_json(self, name):
@@ -364,6 +378,11 @@ def codex_usage(auth):
         child.stdout.close()
 
 
+# The usage service rate-limits per credential, and Claude Desktop polls it too.
+ACTIVE_SECONDS = 60
+OTHER_SECONDS = 300
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args):
         return None
@@ -404,7 +423,8 @@ USAGE_ERRORS = {
     "keyring_missing": "Claude usage: the Claude Safe Storage key is unavailable. Unlock the desktop keyring used by Claude and retry.",
     "keyring_timeout": "Claude usage: the desktop keyring did not respond. Unlock it; usage will retry automatically.",
     "decrypt_failed": "Claude usage: the cache could not be decrypted with Claude's Safe Storage key. Keep Claude and Muisland in the same Linux user session.",
-    "token_missing": "Claude usage: no user:profile credential belongs to this account. Open Claude, finish signing in, then save again.",
+    "token_missing": "Claude usage: Claude has stored credentials for this account, but none can read usage. Keep Claude open on this account; usage retries automatically.",
+    "account_absent": "Claude usage: Claude has not stored a usage credential for this account yet. Keep Claude open and signed in to it; usage retries automatically.",
     "token_expired": "Claude usage: the on-disk credential has expired. Open Claude so it can refresh the session; usage will retry automatically.",
     "profile_mismatch": "Claude usage: the saved profile identity changed. Save this account again.",
 }
@@ -497,6 +517,7 @@ def claude_token(config):
     expired = False
     found = False
     decoded = False
+    owned = False
     for field in AUTH_KEYS[:2]:
         if not isinstance(config.get(field), str) or not config[field]:
             continue
@@ -509,6 +530,7 @@ def claude_token(config):
         decoded = True
         # Like Windows, prefer the least broadly scoped matching credential.
         for key, value in sorted(cache.items(), key=lambda item: len(item[0])):
+            owned = owned or key.startswith("acct:" + account + "|")
             if not (
                 key.startswith("acct:" + account + "|")
                 and ":https://api.anthropic.com:" in key
@@ -544,7 +566,109 @@ def claude_token(config):
         raise UsageError("token_expired")
     if errors and not decoded:
         raise errors[0]
-    raise UsageError("token_missing" if found else "cache_missing")
+    if not found:
+        raise UsageError("cache_missing")
+    raise UsageError("token_missing" if owned else "account_absent")
+
+
+def cache_shape(cache, account):
+    # Counts and fixed scope/host words only; never IDs, tokens or key text.
+    entries = [(key, value) for key, value in cache.items() if isinstance(key, str)]
+    mine = [(k, v) for k, v in entries if k.startswith("acct:" + account + "|")]
+    scopes = set()
+    hosts = set()
+    for key, _ in mine:
+        if ":https://" in key:
+            host, _, scope = key.split(":https://", 1)[1].partition(":")
+            hosts.add(host[:64])
+            scopes.update(
+                word[:32]
+                for word in scope.split()
+                if word.replace(":", "").replace("_", "").isalpha()
+            )
+    return {
+        "entries": len(entries),
+        "entries_with_account_prefix": sum(k.startswith("acct:") for k, _ in entries),
+        "entries_for_this_account": len(mine),
+        "hosts_for_this_account": sorted(hosts),
+        "scopes_for_this_account": sorted(scopes),
+        "token_fields_present": sum(
+            isinstance(v, dict) and isinstance(v.get("token"), str) for _, v in mine
+        ),
+    }
+
+
+def claude_session_cookie(root):
+    """Whether Claude's cookie store holds a claude.ai session. Names only, never values."""
+    path = Path(root) / "Network" / "Cookies"
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        db = sqlite3.connect(
+            "file:" + urllib.parse.quote(str(path)) + "?mode=ro&immutable=1", uri=True
+        )
+        try:
+            return (
+                db.execute(
+                    "select 1 from cookies where name='sessionKey' and "
+                    "(host_key like '%claude.ai' or host_key like '%claude.com') limit 1"
+                ).fetchone()
+                is not None
+            )
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return False
+
+
+def claude_local_usage(newer_than=0):
+    """Latest quota sample Claude Desktop itself wrote to disk (percentages only).
+
+    Used for the signed-in account when the usage service cannot be read. No network.
+    """
+    try:
+        path = claude_dir() / "plan-usage-history.json"
+        if path.is_symlink() or path.stat().st_size > 4 * 1024 * 1024:
+            return None
+        samples = json.loads(path.read_bytes()).get("samples")
+        sample = max(
+            (
+                item
+                for item in samples
+                if isinstance(item, dict)
+                and isinstance(item.get("u"), dict)
+                and isinstance(item.get("t"), (int, float))
+                and not isinstance(item.get("t"), bool)
+            ),
+            key=lambda item: item["t"],
+        )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    stamp = sample["t"] / 1000 if sample["t"] > 100_000_000_000 else sample["t"]
+    if stamp <= newer_than or not time.time() - 3600 <= stamp <= time.time() + 300:
+        return None
+    result = {
+        "session": limit_window({"utilization": sample["u"].get("fh")}),
+        "weekly": limit_window({"utilization": sample["u"].get("sd")}),
+        "plan": "Claude",
+        "updated": int(stamp),
+        "local": True,
+    }
+    return result if result["session"] or result["weekly"] else None
+
+
+def retry_after_seconds(value, now=None):
+    if not value:
+        return None
+    try:
+        return max(1, int(value.strip()))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(value).timestamp()
+    except (TypeError, ValueError):
+        return None
+    return max(1, int(when - (time.time() if now is None else now)))
 
 
 def claude_diagnostics():
@@ -569,7 +693,24 @@ def claude_diagnostics():
                     )
                 except (ValueError, UnicodeError):
                     entry["format"] = "invalid_base64"
+                try:
+                    entry["cache"] = cache_shape(
+                        decrypt_claude_cache(value),
+                        str(config.get("lastKnownAccountUuid") or ""),
+                    )
+                except UsageError as error:
+                    entry["decode"] = error.code
             report["fields"][field] = entry
+        try:
+            root = claude_dir()
+            report["claude_running"] = bool(claude_processes())
+            report["session_cookie_present"] = claude_session_cookie(root)
+            report["local_usage_history_present"] = (
+                root / "plan-usage-history.json"
+            ).is_file()
+            report["local_usage_sample_usable"] = claude_local_usage() is not None
+        except OSError:
+            pass
         claude_token(config)
         report["credential_status"] = "ready_for_usage_request"
     except UsageError as error:
@@ -670,10 +811,11 @@ def launch_claude(executable=None):
     )
 
 
-def capture_claude():
+def capture_claude(require_identity=True):
     root = claude_dir()
     config = claude_config()
-    claude_identity(config)
+    if require_identity:
+        claude_identity(config)
     files = {}
     total = 0
     for name in AUTH_ITEMS:
@@ -697,10 +839,29 @@ def capture_claude():
     }
 
 
-def restore_claude(snapshot):
+def clear_claude_sign_in():
+    """Forget the sign-in on this computer only. Nothing is sent to Anthropic, so
+    the saved session is not revoked the way Claude's own Log out revokes it."""
     root = claude_dir()
     config = claude_config()
-    claude_identity(snapshot["config"])
+    for name in ("Network", "Local Storage", "Session Storage"):
+        path = root / name
+        if path.is_symlink():
+            raise ValueError("Refusing to replace linked Claude data")
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+    for key in AUTH_KEYS:
+        config.pop(key, None)
+    atomic(root / "config.json", encoded(config))
+
+
+def restore_claude(snapshot, require_identity=True):
+    root = claude_dir()
+    config = claude_config()
+    if require_identity:
+        claude_identity(snapshot["config"])
     # Stage all bytes before mutating the live authentication folders.
     stage = root / (".muisland-stage-" + secrets.token_hex(6))
     stage.mkdir(mode=0o700)
@@ -761,6 +922,9 @@ class Service:
         self.busy = False
         self.errors = {}
         self.next_poll = {}
+        self.failures = {}
+        # (identity, wall-clock time it was first seen signed in during this run)
+        self.claude_seen = (None, 0)
         self.settings = {
             "provider": "claude",
             "theme": 0,
@@ -870,7 +1034,14 @@ class Service:
                 key = (provider, row["slot"])
                 if row.get("draft") or self.next_poll.get(key, 0) > time.monotonic():
                     continue
-                self.next_poll[key] = time.monotonic() + 120
+                self.next_poll[key] = time.monotonic() + OTHER_SECONDS
+                active = current is not None and current == row.get("identity")
+                if provider == "claude" and active and self.claude_seen[0] != current:
+                    # A local sample only counts once it is newer than this sign-in.
+                    self.claude_seen = (
+                        current,
+                        0 if self.claude_seen[0] is None else time.time(),
+                    )
                 try:
                     auth = self.vault.read_json(self.snapshot_name(*key))
                     saved_identity = (
@@ -912,25 +1083,61 @@ class Service:
                             account["usage"] = usage
                             self.errors.pop(key, None)
                             self.persist()
+                    self.failures.pop(key, None)
                     self.next_poll[key] = time.monotonic() + (
-                        30 if current == row.get("identity") else 120
+                        ACTIVE_SECONDS if active else OTHER_SECONDS
                     )
                 except Exception as e:
                     # Never expose protocol payloads, response bodies, or credentials.
-                    self.errors[key] = usage_error_message(e, provider)
-                    delay = 120
-                    if isinstance(e, urllib.error.HTTPError):
-                        if e.code in (401, 403):
-                            delay = 900
-                        elif e.code == 429:
-                            try:
-                                delay = max(
-                                    120,
-                                    min(3600, int(e.headers.get("Retry-After", "120"))),
-                                )
-                            except ValueError:
-                                pass
+                    message = usage_error_message(e, provider)
+                    rejected = isinstance(e, urllib.error.HTTPError) and e.code in (
+                        401,
+                        403,
+                    )
+                    count = self.failures[key] = self.failures.get(key, 0) + 1
+                    base = ACTIVE_SECONDS if active else OTHER_SECONDS
+                    delay = min(900, base * 2 ** min(count, 5))
+                    if rejected:
+                        delay = 900
+                    elif isinstance(e, urllib.error.HTTPError) and e.code == 429:
+                        delay = max(
+                            delay,
+                            min(
+                                3600,
+                                retry_after_seconds(e.headers.get("Retry-After")) or 0,
+                            ),
+                        )
                     self.next_poll[key] = time.monotonic() + delay
+                    local = None
+                    if (
+                        provider == "claude"
+                        and active
+                        and not rejected
+                        and not (isinstance(e, UsageError) and e.code == "profile_mismatch")
+                    ):
+                        # Claude Desktop records its own quota samples on disk; show
+                        # those for the signed-in account instead of an empty card.
+                        local = claude_local_usage(self.claude_seen[1])
+                    with self.lock:
+                        account = next(
+                            (
+                                a
+                                for a in self.settings[provider]
+                                if a["slot"] == row["slot"]
+                                and a.get("identity") == row.get("identity")
+                            ),
+                            None,
+                        )
+                        if local and account is not None:
+                            shown = account.get("usage") or {}
+                            if shown.get("updated", 0) < local["updated"]:
+                                if shown.get("plan") and not shown.get("local"):
+                                    local["plan"] = shown["plan"]
+                                account["usage"] = local
+                                self.persist()
+                            self.errors.pop(key, None)
+                        else:
+                            self.errors[key] = message
 
     def handle(self, action, data=None):
         data = data or {}
@@ -1019,6 +1226,7 @@ class Service:
             ):
                 return self.state()
             self.busy = True
+        notice = ""
         try:
             if self.preview:
                 if action == "switch":
@@ -1061,10 +1269,46 @@ class Service:
                     raise FileNotFoundError(
                         "Install Claude Desktop or set MUISLAND_CLAUDE_BIN before changing profiles."
                     )
+                # Saving into a different slot while the signed-in account is already
+                # saved elsewhere means "I want to add another account".
+                other = (
+                    next(
+                        (
+                            a
+                            for a in rows
+                            if a is not row
+                            and not a.get("draft")
+                            and a.get("identity") == expected
+                        ),
+                        None,
+                    )
+                    if action == "save" and row.get("identity") != expected
+                    else None
+                )
                 was_running = bool(claude_processes())
                 close_claude()
                 try:
-                    if action == "save":
+                    if other is not None:
+                        auth = capture_claude()
+                        if claude_identity(auth["config"]) != expected:
+                            raise ValueError(
+                                "Claude changed accounts while closing. Nothing was changed."
+                            )
+                        self.vault.write_json("claude/previous.bin", auth)
+                        if claude_session_cookie(claude_dir()):
+                            self.vault.save_profile(
+                                self.snapshot_name(p, other["slot"]), encoded(auth)
+                            )
+                        clear_claude_sign_in()
+                        notice = (
+                            other["name"]
+                            + " is already saved, so Claude reopened at its sign-in screen. "
+                            "Sign in to the other account there, then choose Save again. "
+                            + other["name"]
+                            + " was not signed out and can still be switched to. "
+                            "Avoid Claude's own Log out: it ends that account's saved session."
+                        )
+                    elif action == "save":
                         auth = capture_claude()
                         if claude_identity(auth["config"]) != expected:
                             raise ValueError(
@@ -1073,7 +1317,15 @@ class Service:
                         self.vault.save_profile(
                             self.snapshot_name(p, row["slot"]), encoded(auth)
                         )
-                        row.update(draft=False, identity=expected, usage=None)
+                        row.update(
+                            draft=False,
+                            identity=expected,
+                            usage=(
+                                row.get("usage")
+                                if row.get("identity") == expected
+                                else None
+                            ),
+                        )
                     else:
                         if self.settings["protect_local"]:
                             self.vault.checkpoint(claude_dir())
@@ -1082,15 +1334,38 @@ class Service:
                             if action == "rollback"
                             else self.snapshot_name(p, row["slot"])
                         )
-                        previous = capture_claude()
+                        # Claude may be signed out right now; that must not block a switch.
+                        previous = capture_claude(require_identity=False)
                         self.vault.write_json("claude/previous.bin", previous)
-                        restore_claude(auth)
+                        leaving = previous["config"].get("lastKnownAccountUuid")
+                        outgoing = next(
+                            (
+                                a
+                                for a in rows
+                                if not a.get("draft")
+                                and leaving
+                                and a.get("identity") == leaving
+                            ),
+                            None,
+                        )
+                        if outgoing is not None and claude_session_cookie(claude_dir()):
+                            # Keep the account being left current: Claude renews its
+                            # session while running, and an old copy can stop working.
+                            self.vault.save_profile(
+                                self.snapshot_name(p, outgoing["slot"]),
+                                encoded(previous),
+                            )
+                        restore_claude(auth, require_identity=action != "rollback")
                 finally:
                     if was_running or action == "save":
                         launch_claude(executable)
             self.persist()
             self.next_poll.clear()
-            return self.state()
+            self.failures.clear()
+            state = self.state()
+            if notice:
+                state["notice"] = notice
+            return state
         finally:
             self.busy = False
 

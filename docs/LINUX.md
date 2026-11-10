@@ -9,7 +9,7 @@ Muisland runs as a desktop application on Linux, with the same Claude/Codex prof
 Download the `.deb` for your architecture and Ubuntu baseline from [the build artifacts](https://github.com/muhameho/Muisland/actions/workflows/build.yml), extract the artifact ZIP, then run:
 
 ```bash
-sudo apt install ./muisland_0.5.2_amd64.deb
+sudo apt install ./muisland_0.5.3_amd64.deb
 ```
 
 Open **Muisland** in your application launcher. Installing with `apt` resolves runtime dependencies. An unlocked desktop Secret Service keyring (GNOME Keyring, or an equivalent provider) is required for encrypted profiles. Installing a keyring package does not silently unlock or migrate an existing keyring.
@@ -41,7 +41,7 @@ sudo apt install python3 python3-gi python3-gi-cairo python3-cryptography \
 
 Other distributions need Python 3.10+, PyGObject with Cairo, GTK 3, WebKitGTK 4.1 (4.0 also accepted by the runtime), Python cryptography, libsecret's `secret-tool`, and a desktop Secret Service provider. Native layer-shell desktops additionally need the GTK Layer Shell introspection typelib. Distribution package names differ; the Ubuntu package cannot be installed with Fedora/Arch package managers. Use **linux-any** on those families. The compiled x86-64 archive remains available for glibc systems; **linux-any** is the option for musl systems such as Alpine.
 
-Extract `muisland-0.5.2-linux-any.tar.gz`, open a terminal in its folder, then:
+Extract `muisland-0.5.3-linux-any.tar.gz`, open a terminal in its folder, then:
 
 ```bash
 ./muisland --check-env
@@ -119,6 +119,10 @@ Saving a profile and reading its quota are separate operations. A usage error do
 muisland --diagnose-usage
 ```
 
-This command performs a local Claude-format check only. It prints fixed metadata: whether the profile/identity fields exist, the cache format marker (for example v10/v11), and whether a matching usage credential can be decoded. It never prints account IDs, paths, OAuth tokens, cache plaintext, or Safe Storage keys, and makes no network request. Sharing this report is enough to identify many Linux-specific failures; do not share config.json or auth tokens.
+This command performs a local Claude-format check only. It prints fixed metadata: whether the profile/identity fields exist, the cache format marker (for example v10/v11), how many cached credentials exist and how many belong to the signed-in account, their scope names, whether a session cookie and Claude's local usage history are present, and whether a matching usage credential can be decoded. It never prints account IDs, paths, OAuth tokens, cache plaintext, or Safe Storage keys, and makes no network request.
+
+Usage is polled every minute for the signed-in account and every five minutes for the others, with increasing pauses after errors and full respect for an HTTP 429 `Retry-After`. When the usage service cannot be read for the signed-in account (rate limit, network, or no usable credential yet), the card shows the latest sample Claude Desktop itself recorded in `plan-usage-history.json`. Those samples are percentages without reset times and can be up to about 15 minutes old. A rejected session (HTTP 401/403) is always shown as an error.
+
+To add a second Claude account, choose **Add account → Save** while the first is still signed in: Muisland reopens Claude at its sign-in screen without signing the saved account out. Do not use Claude's own Log out to change accounts; it ends the saved session, and a later switch then asks for a new sign-in. Sharing this report is enough to identify many Linux-specific failures; do not share config.json or auth tokens.
 
 The expanded island closes on an outside button press, not on pointer-driven focus loss. X11/XWayland checks button transitions; native layer-shell uses a transparent click surface beneath the menu. Moving the pointer outside the menu keeps it open.

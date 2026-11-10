@@ -293,6 +293,13 @@ class LinuxBackendTests(unittest.TestCase):
         config["lastKnownAccountUuid"] = "different"
         with self.assertRaises(backend.UsageError) as error:
             backend.claude_token(config)
+        self.assertEqual(error.exception.code, "account_absent")
+        config["lastKnownAccountUuid"] = "mine"
+        config["oauth:tokenCache"] = self.encrypt_cache(
+            {"acct:mine|x:https://api.anthropic.com:user:inference": {"token": "no"}}
+        )
+        with self.assertRaises(backend.UsageError) as error:
+            backend.claude_token(config)
         self.assertEqual(error.exception.code, "token_missing")
 
     def test_v11_secret_lookup_is_scoped_to_claude_and_decrypts(self):
@@ -365,6 +372,173 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertEqual(report["credential_status"], "ready_for_usage_request")
         self.assertNotIn("private-account-id", json.dumps(report))
         self.assertNotIn("private-token", json.dumps(report))
+
+    def claude_home(self, account, cookie=True):
+        import sqlite3
+
+        home = self.root / "claude-home"
+        (home / "Network").mkdir(parents=True, exist_ok=True)
+        (home / "Local Storage").mkdir(exist_ok=True)
+        (home / "Local Storage" / "data").write_bytes(account.encode())
+        (home / "config.json").write_bytes(
+            backend.encoded({"lastKnownAccountUuid": account, "theme": "dark"})
+            if account
+            else backend.encoded({"theme": "dark"})
+        )
+        cookies = home / "Network" / "Cookies"
+        if cookies.exists():
+            cookies.unlink()
+        db = sqlite3.connect(cookies)
+        db.execute("create table cookies (host_key text, name text, encrypted_value blob)")
+        if cookie:
+            db.execute("insert into cookies values ('.claude.ai', 'sessionKey', x'01')")
+        db.commit()
+        db.close()
+        return home
+
+    def claude_patches(self, home):
+        return (
+            patch.dict(os.environ, {"MUISLAND_CLAUDE_CONFIG": str(home)}),
+            patch.object(backend, "claude_executable", return_value="/opt/claude/claude"),
+            patch.object(backend, "claude_processes", return_value=[]),
+            patch.object(backend, "close_claude"),
+            patch.object(backend, "launch_claude"),
+        )
+
+    def test_saving_a_second_slot_opens_sign_in_without_duplicating_or_signing_out(
+        self,
+    ):
+        home = self.claude_home("first")
+        service = backend.Service(vault=self.vault, network=False)
+        patches = self.claude_patches(home)
+        with patches[0], patches[1], patches[2], patches[3], patches[4] as reopen:
+            service.handle("add")
+            service.handle("save", {"slot": 1, "confirmed": True})
+            service.handle("add")
+            state = service.handle("save", {"slot": 2, "confirmed": True})
+            self.assertIn("sign-in screen", state["notice"])
+            self.assertEqual(reopen.call_count, 2)
+            # Slot 1 keeps a restorable session; slot 2 is still an unsaved draft.
+            saved = self.vault.read_json("claude/account-1.bin")
+            self.assertEqual(saved["config"]["lastKnownAccountUuid"], "first")
+            self.assertIn("Network/Cookies", saved["files"])
+            self.assertFalse(self.vault.exists("claude/account-2.bin"))
+            self.assertTrue(service.settings["claude"][1]["draft"])
+            # Only this computer forgot the sign-in; unrelated preferences stay.
+            live = json.loads((home / "config.json").read_bytes())
+            self.assertEqual(live, {"theme": "dark"})
+            self.assertFalse((home / "Network").exists())
+            # The user signs in to another account and saves it normally.
+            self.claude_home("second")
+            state = service.handle("save", {"slot": 2, "confirmed": True})
+            self.assertNotIn("notice", state)
+            self.assertEqual(service.settings["claude"][1]["identity"], "second")
+
+    def test_switch_refreshes_the_account_being_left_and_works_when_signed_out(self):
+        home = self.claude_home("first")
+        service = backend.Service(vault=self.vault, network=False)
+        patches = self.claude_patches(home)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            service.handle("add")
+            service.handle("save", {"slot": 1, "confirmed": True})
+            self.claude_home("second")
+            service.handle("add")
+            service.handle("save", {"slot": 2, "confirmed": True})
+            # Claude renewed the second account's session after it was saved.
+            (home / "Local Storage" / "data").write_bytes(b"second-renewed")
+            service.handle("switch", {"slot": 1, "confirmed": True})
+            self.assertEqual(service.current("claude"), "first")
+            renewed = self.vault.read_json("claude/account-2.bin")
+            self.assertEqual(
+                base64.b64decode(renewed["files"]["Local Storage/data"]),
+                b"second-renewed",
+            )
+            # A signed-out Claude must neither block a switch nor replace a good copy.
+            self.claude_home("first", cookie=False)
+            (home / "Local Storage" / "data").write_bytes(b"signed-out")
+            service.handle("switch", {"slot": 2, "confirmed": True})
+            self.assertEqual(service.current("claude"), "second")
+            kept = self.vault.read_json("claude/account-1.bin")
+            self.assertEqual(
+                base64.b64decode(kept["files"]["Local Storage/data"]), b"first"
+            )
+            self.claude_home("", cookie=False)
+            service.handle("switch", {"slot": 1, "confirmed": True})
+            self.assertEqual(service.current("claude"), "first")
+
+    def test_rate_limited_active_account_shows_claudes_own_local_sample(self):
+        import time
+        from urllib.error import HTTPError
+
+        home = self.claude_home("first")
+        service = backend.Service(vault=self.vault, network=True)
+        patches = self.claude_patches(home)
+        limited = HTTPError(
+            "https://api.anthropic.com", 429, "", {"Retry-After": "1800"}, None
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            service.handle("add")
+            service.handle("save", {"slot": 1, "confirmed": True})
+            with patch.object(backend, "claude_usage", side_effect=limited) as fetch:
+                service.poll()
+                row = service.state()["accounts"][0]
+                self.assertIn("HTTP 429", row["error"])
+                self.assertIsNone(row["usage"])
+                # The server's pause is respected; no second request is sent.
+                service.poll()
+                self.assertEqual(fetch.call_count, 1)
+                self.assertGreater(
+                    service.next_poll[("claude", 1)] - time.monotonic(), 1700
+                )
+                (home / "plan-usage-history.json").write_bytes(
+                    backend.encoded(
+                        {
+                            "version": 2,
+                            "samples": [
+                                {"t": 1000, "org": "o", "u": {"fh": 99, "sd": 99}},
+                                {
+                                    "t": int(time.time() * 1000),
+                                    "org": "o",
+                                    "u": {"fh": 41, "sd": 17},
+                                },
+                            ],
+                        }
+                    )
+                )
+                service.next_poll.clear()
+                service.poll()
+            row = service.state()["accounts"][0]
+            self.assertEqual(row["error"], "")
+            self.assertEqual(row["usage"]["session"]["used"], 41)
+            self.assertEqual(row["usage"]["weekly"]["used"], 17)
+            # A rejected session is never papered over with local numbers.
+            denied = HTTPError("https://api.anthropic.com", 401, "", {}, None)
+            service.next_poll.clear()
+            with patch.object(backend, "claude_usage", side_effect=denied):
+                service.poll()
+            self.assertIn("HTTP 401", service.state()["accounts"][0]["error"])
+
+    def test_retry_after_and_cache_shape_are_safe(self):
+        self.assertEqual(backend.retry_after_seconds("120"), 120)
+        self.assertEqual(
+            backend.retry_after_seconds("Mon, 09 Nov 2026 12:02:00 GMT", 1794225600),
+            120,
+        )
+        self.assertIsNone(backend.retry_after_seconds("soon"))
+        shape = backend.cache_shape(
+            {
+                "acct:private-id|client:https://api.anthropic.com:user:inference user:profile": {
+                    "token": "private-token"
+                },
+                "acct:someone|client:https://api.anthropic.com:user:profile": {},
+            },
+            "private-id",
+        )
+        self.assertEqual(shape["entries_for_this_account"], 1)
+        self.assertEqual(
+            shape["scopes_for_this_account"], ["user:inference", "user:profile"]
+        )
+        self.assertNotIn("private", json.dumps(shape))
 
 
 if __name__ == "__main__":
