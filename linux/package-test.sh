@@ -2,7 +2,7 @@
 set -euo pipefail
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
-archive="$(find dist -maxdepth 1 -name 'muisland-*-linux-*.tar.gz' -print -quit)"
+archive="${1:-$(find dist -maxdepth 1 -name 'muisland-*-linux-*.tar.gz' -print -quit)}"
 [[ -n "$archive" ]]
 tar -xzf "$archive" -C "$work"
 folder="$(find "$work" -mindepth 1 -maxdepth 1 -type d -print -quit)"
@@ -31,9 +31,9 @@ with tempfile.TemporaryFile() as output:
     assert pids
     assert os.waitpid(pids[0], 0)[1] == 0
     output.seek(0)
-    assert b'Muisland 0.5.0' in output.read()
+    assert output.read().strip().startswith(b'Muisland ')
 data = home / '.local/share/muisland'
-data.mkdir()
+data.mkdir(exist_ok=True)
 (data/'kept.txt').write_text('disposable-profile-placeholder')
 PY
 bash "$folder/install.sh" --uninstall

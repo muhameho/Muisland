@@ -9,14 +9,26 @@ Muisland runs as a desktop application on Linux, with the same Claude/Codex prof
 Download the `.deb` for your architecture and Ubuntu baseline from [the build artifacts](https://github.com/muhameho/Muisland/actions/workflows/build.yml), extract the artifact ZIP, then run:
 
 ```bash
-sudo apt install ./muisland_0.5.0_amd64.deb
+sudo apt install ./muisland_0.5.1_amd64.deb
 ```
 
 Open **Muisland** in your application launcher. Installing with `apt` resolves runtime dependencies. An unlocked desktop Secret Service keyring (GNOME Keyring, or an equivalent provider) is required for encrypted profiles. Installing a keyring package does not silently unlock or migrate an existing keyring.
 
-Ubuntu 22.04 and 24.04 build jobs exercise their own system Python, GTK, WebKitGTK, Secret Service, X11 and headless Wayland environments. Pick the 22.04 build for its older glibc baseline. ARM64 can be built from source on ARM64; the hosted downloadable artifacts are x86-64.
+Ubuntu 22.04 and 24.04 build jobs exercise their own system Python, GTK, WebKitGTK, Secret Service, X11 and headless Wayland environments. Additional runtime jobs cover Debian 12, Fedora 44, Arch rolling, openSUSE Tumbleweed, and Alpine 3.23 (musl). Pick the 22.04 build for its older glibc baseline. ARM64 can be built from source on ARM64; the hosted downloadable artifacts are x86-64.
 
 ## Portable archive / other distributions
+
+The **linux-any** archive contains the GTK/Python application instead of a glibc-linked launcher. It uses the distribution's system libraries and runs on supported CPU architectures, including ARM64, without rebuilding Rust. It still needs Python 3.10+ and the runtime packages below; it is not a bundle of those libraries.
+
+Its dependency helper prints the distro-specific package command by default. Installation is opt-in:
+
+```bash
+bash dependencies.sh           # show the native package-manager recipe
+bash dependencies.sh --install # install system packages (root/sudo)
+bash install.sh                # install Muisland for the current user
+```
+
+Recipes cover Ubuntu/Debian derivatives, Fedora, Arch derivatives, openSUSE, and Alpine. Unknown distribution IDs are reported with manual requirements rather than guessed. XWayland and an unlocked Secret Service keyring are installed/configured by the system; the helper does not disable sandboxing or weaken credential storage.
 
 Install the equivalent runtime packages first:
 
@@ -27,9 +39,9 @@ sudo apt install python3 python3-gi python3-gi-cairo python3-cryptography \
   gir1.2-gtklayershell-0.1 xwayland
 ```
 
-Other distributions need Python 3.10+, PyGObject with Cairo, GTK 3, WebKitGTK 4.1 (4.0 also accepted by the runtime), Python cryptography, libsecret's `secret-tool`, and a desktop Secret Service provider. Native layer-shell desktops additionally need the GTK Layer Shell introspection typelib. Distribution package names differ; the Ubuntu package cannot be installed with Fedora/Arch package managers.
+Other distributions need Python 3.10+, PyGObject with Cairo, GTK 3, WebKitGTK 4.1 (4.0 also accepted by the runtime), Python cryptography, libsecret's `secret-tool`, and a desktop Secret Service provider. Native layer-shell desktops additionally need the GTK Layer Shell introspection typelib. Distribution package names differ; the Ubuntu package cannot be installed with Fedora/Arch package managers. Use **linux-any** on those families. The compiled x86-64 archive remains available for glibc systems; **linux-any** is the option for musl systems such as Alpine.
 
-Extract `muisland-0.5.0-linux-x86_64.tar.gz`, open a terminal in its folder, then:
+Extract `muisland-0.5.1-linux-any.tar.gz`, open a terminal in its folder, then:
 
 ```bash
 ./muisland --check-env
@@ -85,7 +97,15 @@ cargo test --locked
 python3 -m unittest discover -s linux -v
 bash build.sh --deb
 bash build.sh --tar
+bash build.sh --source # architecture-independent archive; no Rust compiler needed
 dbus-run-session -- xvfb-run -a ./target/release/muisland --preview --smoke-test
 ```
 
 The repository also contains isolated Secret Service and headless Sway test scripts. Run those in a disposable test session/container; they are CI checks, not commands required to use Muisland.
+
+
+## Scope of compatibility
+
+The automated matrix exercises real distro packages and isolated graphical sessions. It does not establish that every derivative, historical release, GPU driver, or desktop shell is supported. GNOME/KDE/Xfce/Cinnamon/MATE/Budgie on X11 or XWayland use the same GTK integration; native Wayland placement additionally requires the compositor's layer-shell protocol. Non-Linux systems and Linux systems missing Python 3.10+/GTK3/WebKitGTK are outside this runtime's requirements.
+
+The **linux-any** package has no CPU-specific launcher, but each target still needs native dependencies from its own distribution. Hosted container tests currently run on x86-64. Other architectures are enabled by this packaging design and are not claimed as separately tested hardware.

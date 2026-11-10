@@ -1,0 +1,17 @@
+ARG DISTRO=fedora:44
+FROM ${DISTRO}
+RUN if [ -f /etc/alpine-release ]; then apk add --no-cache bash; fi
+WORKDIR /app
+COPY linux/dependencies.sh /app/linux/dependencies.sh
+RUN bash /app/linux/dependencies.sh --install
+RUN . /etc/os-release && case "$ID" in \
+    fedora) dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon sway tar gzip coreutils dejavu-sans-fonts ;; \
+    arch) pacman -S --needed --noconfirm xorg-server-xvfb xorg-xauth dbus sway tar gzip ttf-dejavu ;; \
+    opensuse-tumbleweed) zypper --non-interactive install xorg-x11-server-Xvfb xauth dbus-1 sway tar gzip dejavu-fonts ;; \
+    alpine) apk add xvfb xauth dbus sway font-dejavu ;; \
+    *) exit 1 ;; esac
+COPY Cargo.toml README.md ./
+COPY docs ./docs
+COPY linux ./linux
+RUN python3 linux/package-source.py && tar -xzf dist/*-linux-any.tar.gz -C /tmp && mkdir -p target/release && cp -R /tmp/muisland-*-linux-any/. target/release/ && python3 -m unittest discover -s linux -v && ./target/release/muisland --check-env && bash linux/package-test.sh dist/*-linux-any.tar.gz
+CMD ["dbus-run-session", "--", "bash", "linux/x11-test.sh"]

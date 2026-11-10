@@ -8,6 +8,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY linux ./linux
+COPY docs ./docs
 COPY build.sh README.md ./
 RUN cargo build --release --locked && python3 -m unittest discover -s linux -v && ./target/release/muisland --check-env
 CMD ["dbus-run-session", "--", "xvfb-run", "-a", "./target/release/muisland", "--preview", "--smoke-test"]

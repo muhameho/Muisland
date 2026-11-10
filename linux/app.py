@@ -67,6 +67,12 @@ def main():
         return
     if args.quit:
         return
+    if Gdk.Display.get_default() is None:
+        print(
+            "No desktop display is available. Start Muisland inside an X11/Wayland desktop session.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     try:
         service = Service(
             preview=args.preview or args.smoke_test,

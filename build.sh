@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ "$(uname -s)" != Linux ]]; then echo 'Run build.sh on Linux; Windows uses build.ps1.' >&2; exit 1; fi
+if [[ "${1:-}" == --source ]]; then exec python3 linux/package-source.py; fi
 command -v cargo >/dev/null || { echo 'Install Rust using rustup first.' >&2; exit 1; }
 cargo build --release --locked
 ./target/release/muisland --check-env
@@ -37,7 +38,7 @@ elif [[ "${1:-}" == --tar ]]; then
   install -m644 linux/muisland.desktop linux/muisland.svg README.md "$stage/$folder/"
   tar -C "$stage" -czf "dist/${folder}.tar.gz" "$folder"
 elif [[ -n "${1:-}" ]]; then
-  echo 'Usage: bash build.sh [--deb|--tar]' >&2; exit 1
+  echo 'Usage: bash build.sh [--deb|--tar|--source]' >&2; exit 1
 else
   echo 'Built target/release/muisland. Run it, or use --preview for sample accounts.'
 fi

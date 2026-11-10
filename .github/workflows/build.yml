@@ -32,6 +32,8 @@ jobs:
       - run: dbus-run-session -- bash linux/keyring_test.sh
       - run: bash build.sh --deb
       - run: bash build.sh --tar
+      - run: bash build.sh --source
+      - run: bash linux/package-test.sh dist/*-linux-any.tar.gz
       - run: bash linux/package-test.sh
       - run: sudo dpkg -i dist/*.deb
       - run: /usr/bin/muisland --version
@@ -54,3 +56,25 @@ jobs:
       - run: docker run --rm muisland-debian
       - run: docker run --rm muisland-debian dbus-run-session -- bash linux/keyring_test.sh
       - run: docker run --rm --user 65534:65534 --env HOME=/tmp/muisland-test muisland-debian dbus-run-session -- bash linux/wayland-test.sh
+
+  linux-runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora:44
+            label: Fedora
+          - distro: archlinux:base
+            label: Arch
+          - distro: opensuse/tumbleweed:latest
+            label: openSUSE
+          - distro: alpine:3.23
+            label: Alpine-musl
+    name: Linux runtime (${{ matrix.label }})
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: docker build --build-arg DISTRO=${{ matrix.distro }} -f linux/Dockerfile.runtime -t muisland-runtime .
+      - run: docker run --rm muisland-runtime
+      - run: docker run --rm muisland-runtime dbus-run-session -- bash linux/keyring_test.sh
+      - run: docker run --rm --user 65534:65534 --env HOME=/tmp/muisland-test muisland-runtime dbus-run-session -- bash linux/wayland-test.sh
