@@ -2878,10 +2878,10 @@ mod island {
                 accounts::now().saturating_sub(u.updated) <= 90
                     && (u.session.as_ref().is_some_and(|w| {
                         w.resets.is_none_or(|r| r > accounts::now())
-                            && w.used >= s.settings.session_threshold as f64 * 100.
+                            && w.used >= (s.settings.session_threshold * 100.).round() as f64
                     }) || u.weekly.as_ref().is_some_and(|w| {
                         w.resets.is_none_or(|r| r > accounts::now())
-                            && w.used >= s.settings.weekly_threshold as f64 * 100.
+                            && w.used >= (s.settings.weekly_threshold * 100.).round() as f64
                     }))
             })
     }
@@ -2913,8 +2913,8 @@ mod island {
                 if accounts::now().saturating_sub(u.updated) > 300
                     || x.resets.is_some_and(|r| r <= accounts::now())
                     || y.resets.is_some_and(|r| r <= accounts::now())
-                    || x.used >= s.settings.session_threshold as f64 * 100.
-                    || y.used >= s.settings.weekly_threshold as f64 * 100.
+                    || x.used >= (s.settings.session_threshold * 100.).round() as f64
+                    || y.used >= (s.settings.weekly_threshold * 100.).round() as f64
                 {
                     return None;
                 }
@@ -4457,6 +4457,18 @@ mod island {
             s.active = Some(0);
             refresh_slots(&mut s);
             s.settings.usage_alerts = true;
+            s.settings.accounts[0]
+                .usage
+                .as_mut()
+                .unwrap()
+                .session
+                .as_mut()
+                .unwrap()
+                .used = 80.;
+            assert!(
+                threshold_hit(&s, 0),
+                "Exact configured percentage must trigger"
+            );
             s.settings.accounts[0]
                 .usage
                 .as_mut()
