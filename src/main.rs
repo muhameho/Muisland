@@ -1371,7 +1371,7 @@ mod island {
                     123,
                     12,
                     400,
-                    "Independent sizes · saved on this device",
+                    "Independent sizes · scroll for hover cards & alerts",
                     muted(),
                     372,
                 );
@@ -1427,7 +1427,7 @@ mod island {
                         false,
                     );
                 }
-                text(dc, 24, 604, 12, 600, "Floating appearance", white(), 372);
+
                 button(
                     dc,
                     s,
@@ -2464,6 +2464,7 @@ mod island {
             s.transition = 1.;
             s.reveal = 1.;
             s.bubble_detail = 1.;
+            s.settings.bubble_density = 2;
             match name{
                 "preferences"=>s.view=View::Preferences,
                 "remove-account"=>s.view=View::Remove(0,"Personal".into()),
@@ -3454,6 +3455,7 @@ mod island {
                 if s.open || !s.settings.circle || s.drag || s.down.is_some() {
                     s.peek = false;
                 }
+                let old_rings = (s.ring_session, s.ring_weekly);
                 let usage = s
                     .active
                     .and_then(|i| s.settings.accounts.get(i))
@@ -3473,7 +3475,11 @@ mod island {
                             target
                         } else {
                             let old = display.unwrap_or(target);
-                            old + (target - old) * (dt as f64 * 8.).min(1.)
+                            if (target - old).abs() < 0.05 {
+                                target
+                            } else {
+                                old + (target - old) * (dt as f64 * 8.).min(1.)
+                            }
                         }
                     });
                 }
@@ -3574,7 +3580,8 @@ mod island {
                 }
                 let hover_changed = animate_hover(s, dt);
                 constrain(s);
-                let mut changed = s.toast_until > t
+                let mut changed = old_rings != (s.ring_session, s.ring_weekly)
+                    || s.toast_until > t
                     || s.pulse_until > t
                     || s.peek
                     || matches!(s.view, View::AutoSwitch(_))
