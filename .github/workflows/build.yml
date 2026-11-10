@@ -1,4 +1,4 @@
-name: Windows and Ubuntu builds
+name: Windows and Linux builds
 on:
   push:
     branches: [main]
@@ -27,7 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Linux runtime and test dependencies
-        run: sudo apt-get update && sudo apt-get install -y python3-gi python3-gi-cairo python3-cryptography gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libsecret-tools gnome-keyring gir1.2-gtklayershell-0.1 dbus-x11 xvfb xauth sway desktop-file-utils
+        timeout-minutes: 8
+        run: sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update && sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends python3-gi python3-gi-cairo python3-cryptography gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libsecret-tools gnome-keyring gir1.2-gtklayershell-0.1 dbus-x11 xvfb xauth sway desktop-file-utils
       - run: python3 -m unittest discover -s linux -v
       - run: dbus-run-session -- bash linux/keyring_test.sh
       - run: bash build.sh --deb
