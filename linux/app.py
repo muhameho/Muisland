@@ -121,7 +121,7 @@ def main():
             elif value == "reset":
                 app.reset_position()
             elif value == "quit":
-                Gtk.main_quit()
+                app.request_quit()
         except (OSError, UnicodeError):
             pass
         return True
@@ -146,6 +146,10 @@ def main():
                     if pixbuf:
                         pixbuf.savev(screenshot, "png", [], [])
                 app.show_menu()
+                app.views["menu"].set_zoom_level(1.5)
+                assert (
+                    app.views["menu"].get_zoom_level() == 1.0
+                ), "WebKit page zoom escaped the preferences"
                 app.windows["menu"].emit(
                     "focus-out-event", Gdk.Event.new(Gdk.EventType.FOCUS_CHANGE)
                 )
@@ -213,6 +217,7 @@ class Shell:
         self.html = html
         self.windows = {}
         self.views = {}
+        self.zoom_gestures = {}
         self.roles = {}
         self.floating = tuple(service.settings.get("position", (100, 80)))
         self.position_timer = 0
@@ -221,8 +226,13 @@ class Shell:
         self.open = False
         self.dragging = False
         self.down = None
+        self.drag_anchor = self.floating
+        self.layer_motion = None
+        self.layer_motion_source = 0
+        self.drag_sequence = 0
         self.hide_source = 0
         self.polling = False
+        self.quit_when_idle = False
         self.scales = {}
         self.loaded = set()
         self.clamping = False
@@ -314,6 +324,24 @@ class Shell:
         color.parse("rgba(0,0,0,0)")
         view.set_background_color(color)
         view.get_settings().set_enable_developer_extras(False)
+        # UI sizing belongs to Muisland preferences, never browser page zoom.
+        if hasattr(view.get_settings(), "set_enable_gestures"):
+            view.get_settings().set_enable_gestures(False)
+        gesture = Gtk.GestureZoom.new(view)
+        gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        gesture.connect(
+            "begin", lambda g, _sequence: g.set_state(Gtk.EventSequenceState.CLAIMED)
+        )
+        self.zoom_gestures[role] = gesture
+        view.set_zoom_level(1.0)
+        view.connect(
+            "notify::zoom-level",
+            lambda v, _p: v.set_zoom_level(1.0) if v.get_zoom_level() != 1.0 else None,
+        )
+        view.connect(
+            "scroll-event",
+            lambda _v, event: bool(event.state & Gdk.ModifierType.CONTROL_MASK),
+        )
         view.connect(
             "load-changed",
             lambda _v, event: (
@@ -326,7 +354,7 @@ class Shell:
         win.add(view)
         self.windows[role] = win
         self.views[role] = view
-        win.connect("delete-event", lambda *_: (Gtk.main_quit(), True)[1])
+        win.connect("delete-event", lambda *_: (self.request_quit(), True)[1])
         win.connect("configure-event", lambda *_: self.configured(role))
         # Focus can follow the pointer on Linux. It is not an outside-click signal.
         # X11 observes button transitions; native layer-shell uses a click backdrop.
@@ -342,7 +370,7 @@ class Shell:
             view.connect(
                 "motion-notify-event", lambda _v, event: self.motion(role, event)
             )
-            view.connect("button-release-event", lambda *_: self.release())
+            view.connect("button-release-event", lambda _v, event: self.release(event))
         view.load_html(self.html, "file:///muisland/" + role)
 
     def policy(self, view, decision, kind):
@@ -359,6 +387,7 @@ class Shell:
     def push(self):
         try:
             state = self.service.state()
+            state["version"] = globals().get("MUISLAND_VERSION", "development")
             state["desktop"] = {
                 "autostart": autostart_path().exists(),
                 "backend": (
@@ -590,10 +619,15 @@ class Shell:
                 backdrop.show_all()
 
     def watch_outside_click(self):
-        if not self.open:
+        floating = bool(self.down and self.down[0] == "float")
+        if not self.open and not floating:
             return True
         try:
             x, y, buttons = self.pointer_buttons()
+            if floating and not self.wayland:
+                self.update_float_drag(x, y)
+                if not buttons & int(Gdk.ModifierType.BUTTON1_MASK):
+                    self.release()
             pressed = buttons & ~self.outside_buttons
             self.outside_buttons = buttons
             if self.open and pressed:
@@ -642,6 +676,8 @@ class Shell:
         self.push()
 
     def hover(self, inside):
+        if self.down or self.dragging:
+            return
         if self.hide_source:
             GLib.source_remove(self.hide_source)
             self.hide_source = 0
@@ -683,46 +719,92 @@ class Shell:
         if event.button == 1 and (
             role == "float" or event.y / scale < 50 and event.x / scale < 300
         ):
+            self.drag_sequence += 1
+            self.dragging = False
+            self.drag_anchor = self.floating
             self.down = (role, event.x_root, event.y_root, event.time, event.x, event.y)
+            self.windows["bubble"].hide()
+            # GTK owns floating pointer input. WebKit must not turn it into a
+            # cancelled DOM click/gesture when fast movement leaves the circle.
+            return role == "float"
+        return False
+
+    def update_float_drag(self, x, y):
+        if not self.down or self.down[0] != "float":
+            return
+        dx, dy = x - self.down[1], y - self.down[2]
+        if self.dragging or math.hypot(dx, dy) > 4:
+            self.dragging = True
+            self.floating = (
+                self.drag_anchor[0] + int(dx),
+                self.drag_anchor[1] + int(dy),
+            )
+            self.move_float()
+
+    def apply_layer_motion(self):
+        self.layer_motion_source = 0
+        if self.layer_motion and self.down and self.down[0] == "float":
+            x, y = self.layer_motion
+            dx, dy = x - self.down[4], y - self.down[5]
+            if self.dragging or math.hypot(dx, dy) > 4:
+                self.dragging = True
+                self.floating = (self.floating[0] + int(dx), self.floating[1] + int(dy))
+                self.move_float()
+        self.layer_motion = None
         return False
 
     def motion(self, role, event):
-        if self.layer and self.down and self.down[0] == role:
-            dx, dy = event.x - self.down[4], event.y - self.down[5]
-            if role == "float" and (self.dragging or math.hypot(dx, dy) > 4):
-                self.dragging = True
-                self.windows["bubble"].hide()
-                self.floating = (self.floating[0] + int(dx), self.floating[1] + int(dy))
-                self.move_float()
-            return self.dragging
+        if self.down and self.down[0] == "float":
+            if self.layer:
+                self.layer_motion = (event.x, event.y)
+                if not self.layer_motion_source:
+                    self.layer_motion_source = GLib.timeout_add(
+                        16, self.apply_layer_motion
+                    )
+            else:
+                self.update_float_drag(event.x_root, event.y_root)
+            return True
         if (
             self.down
             and self.down[0] == role
             and math.hypot(event.x_root - self.down[1], event.y_root - self.down[2]) > 4
         ):
             self.dragging = True
-            self.windows["bubble"].hide()
             self.windows[role].begin_move_drag(
                 1, int(event.x_root), int(event.y_root), event.time
             )
             self.down = None
-            GLib.timeout_add(50, self.drag_finished)
+            sequence = self.drag_sequence
+            GLib.timeout_add(50, lambda: self.drag_finished(sequence))
         return False
 
-    def drag_finished(self):
+    def drag_finished(self, sequence=None):
+        if sequence is not None and sequence != self.drag_sequence:
+            return False
         pointer = Gdk.Display.get_default().get_default_seat().get_pointer()
         mask = self.windows["float"].get_window().get_device_position(pointer)[-1]
         if mask & Gdk.ModifierType.BUTTON1_MASK:
             return True
         self.down = None
-        GLib.timeout_add(100, lambda: (setattr(self, "dragging", False), False)[1])
+        self.dragging = False
         self.save_position()
         return False
 
-    def release(self):
+    def release(self, event=None):
+        floating = bool(self.down and self.down[0] == "float")
+        if floating:
+            if self.layer and self.layer_motion:
+                self.apply_layer_motion()
+            elif event is not None:
+                self.update_float_drag(event.x_root, event.y_root)
+        clicked = floating and not self.dragging
         self.down = None
-        GLib.timeout_add(250, lambda: (setattr(self, "dragging", False), False)[1])
-        return False
+        self.dragging = False
+        self.layer_motion = None
+        self.save_position()
+        if clicked:
+            self.show_menu()
+        return floating
 
     def message(self, role, result):
         try:
@@ -756,7 +838,8 @@ class Shell:
             answer(True, {})
             return
         if action == "quit":
-            Gtk.main_quit()
+            answer(True, {})
+            self.request_quit()
             return
         if action == "retry-storage":
             try:
@@ -798,11 +881,11 @@ class Shell:
                 if not self.open and not self.service.busy:
                     self.service.handle("discard")
                 extra = value.get("notice") if isinstance(value, dict) else None
-                value = (
-                    value
-                    if isinstance(value, dict) and "folder" in value
-                    else self.service.state()
-                )
+                if not (isinstance(value, dict) and "folder" in value):
+                    notice = value.get("notice") if isinstance(value, dict) else None
+                    value = self.service.state()
+                    if notice:
+                        value["notice"] = notice
                 if extra:
                     value["notice"] = extra
                 GLib.idle_add(
@@ -823,8 +906,18 @@ class Shell:
                     else "The operation failed safely. Check app availability, permissions, or your desktop keyring."
                 )
                 GLib.idle_add(lambda: (answer(False, text), False)[1])
+            finally:
+                if self.quit_when_idle and not self.service.busy:
+                    GLib.idle_add(self.request_quit)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def request_quit(self):
+        if self.service.busy:
+            self.quit_when_idle = True
+            return False
+        Gtk.main_quit()
+        return False
 
     def refresh(self):
         if not self.polling:

@@ -9,7 +9,7 @@ Muisland runs as a desktop application on Linux, with the same Claude/Codex prof
 Download the `.deb` for your architecture and Ubuntu baseline from [the build artifacts](https://github.com/muhameho/Muisland/actions/workflows/build.yml), extract the artifact ZIP, then run:
 
 ```bash
-sudo apt install ./muisland_0.5.3_amd64.deb
+sudo apt install ./muisland_0.5.4_amd64.deb
 ```
 
 Open **Muisland** in your application launcher. Installing with `apt` resolves runtime dependencies. An unlocked desktop Secret Service keyring (GNOME Keyring, or an equivalent provider) is required for encrypted profiles. Installing a keyring package does not silently unlock or migrate an existing keyring.
@@ -41,7 +41,7 @@ sudo apt install python3 python3-gi python3-gi-cairo python3-cryptography \
 
 Other distributions need Python 3.10+, PyGObject with Cairo, GTK 3, WebKitGTK 4.1 (4.0 also accepted by the runtime), Python cryptography, libsecret's `secret-tool`, and a desktop Secret Service provider. Native layer-shell desktops additionally need the GTK Layer Shell introspection typelib. Distribution package names differ; the Ubuntu package cannot be installed with Fedora/Arch package managers. Use **linux-any** on those families. The compiled x86-64 archive remains available for glibc systems; **linux-any** is the option for musl systems such as Alpine.
 
-Extract `muisland-0.5.3-linux-any.tar.gz`, open a terminal in its folder, then:
+Extract `muisland-0.5.4-linux-any.tar.gz`, open a terminal in its folder, then:
 
 ```bash
 ./muisland --check-env
@@ -121,8 +121,20 @@ muisland --diagnose-usage
 
 This command performs a local Claude-format check only. It prints fixed metadata: whether the profile/identity fields exist, the cache format marker (for example v10/v11), how many cached credentials exist and how many belong to the signed-in account, their scope names, whether a session cookie and Claude's local usage history are present, and whether a matching usage credential can be decoded. It never prints account IDs, paths, OAuth tokens, cache plaintext, or Safe Storage keys, and makes no network request.
 
-Usage is polled every minute for the signed-in account and every five minutes for the others, with increasing pauses after errors and full respect for an HTTP 429 `Retry-After`. When the usage service cannot be read for the signed-in account (rate limit, network, or no usable credential yet), the card shows the latest sample Claude Desktop itself recorded in `plan-usage-history.json`. Those samples are percentages without reset times and can be up to about 15 minutes old. A rejected session (HTTP 401/403) is always shown as an error.
+Remote usage is polled every minute for the signed-in account and every five minutes for others, with increasing pauses after errors and full respect for HTTP 429 `Retry-After`. Current local samples are checked every background tick, including during remote cooldowns. Cookie-only Claude logins do not require an OAuth usage token to display a proven account/org-bound local sample. Local readings carry their source and age; reset times or missing weekly values are not invented. A rejected remote credential is reported separately.
 
 To add a second Claude account, choose **Add account → Save** while the first is still signed in: Muisland reopens Claude at its sign-in screen without signing the saved account out. Do not use Claude's own Log out to change accounts; it ends the saved session, and a later switch then asks for a new sign-in. Sharing this report is enough to identify many Linux-specific failures; do not share config.json or auth tokens.
 
 The expanded island closes on an outside button press, not on pointer-driven focus loss. X11/XWayland checks button transitions; native layer-shell uses a transparent click surface beneath the menu. Moving the pointer outside the menu keeps it open.
+
+
+## 0.5.4 session and interface fixes
+
+- Both Electron cookie layouts (`Cookies` and `Network/Cookies`) and their WAL/journal files are included in authentication snapshots. Old snapshots which omitted the root cookie file cannot reconstruct a cookie they never contained: save each signed-in account again with the updated version.
+- Cookie-only Claude Desktop logins are recognised without requiring an OAuth usage token. Saving while signed out opens Claude for sign-in and does not overwrite a saved account. Preparing another account keeps an encrypted rollback copy and the existing Local State key.
+- Local usage is accepted only when `os-entry-points.json` links the live account and organization, and the sample matches that organization and is newer than the entry-point record. It updates on background ticks, independently of HTTP backoff. Local readings are labelled, with their age; missing weekly/reset data is not invented.
+- On Hyprland/Sway/River, Claude launched by Muisland uses `gnome-libsecret` when Muisland's own unlocked Secret Service key is available. This avoids Electron's unrecognised-desktop `basic_text` selection. Existing explicit secure choices are honoured via `MUISLAND_CLAUDE_PASSWORD_STORE=gnome-libsecret|kwallet|kwallet5|kwallet6`; `default` leaves the app's choice unchanged. Muisland does not select a plaintext backend.
+- Browser pinch/Control-wheel/page zoom is blocked inside the island; independent size controls remain available. Floating pointer input is owned by GTK, with motion coalescing on layer-shell and absolute pointer tracking on X11, avoiding stale release timers stopping a new drag.
+- Quit requests wait for a profile operation to finish. Save/Switch no longer clear unrelated server cooldowns. Windows requests normal Claude exit and does not terminate it automatically after four seconds.
+
+Installation does not replace code already loaded by a running Python process. Quit the old Muisland when no Save/Switch is underway, install the new archive, and open the installed launcher. The Linux footer displays the version actually running. Do not use Claude's own Log out to add a second account; use Add account → Save and the in-island confirmation.

@@ -129,7 +129,7 @@ bash build.sh
 ./target/release/muisland
 ```
 
-To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.3_<architecture>.deb` using `sudo apt install ./muisland_0.5.3_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
+To build a Debian/Ubuntu package, run `bash build.sh --deb`, then install the resulting `dist/muisland_0.5.4_<architecture>.deb` using `sudo apt install ./muisland_0.5.4_amd64.deb`. `bash build.sh --tar` creates a compiled archive; `bash build.sh --source` creates an architecture-independent **linux-any** archive with the Python/GTK runtime, a distro dependency helper, per-user installer, and desktop icon. Use linux-any for Fedora/Arch/openSUSE/Alpine and other compatible native-library environments. See the [Linux installation and desktop guide](docs/LINUX.md). The build workflow also provides Windows and Ubuntu artifacts under [GitHub Actions](https://github.com/muhameho/Muisland/actions/workflows/build.yml).
 
 - **X11:** floating placement, corner clamping, dragging, and an independent hover window.
 - **Wayland sessions with XWayland:** the port selects the X11 backend when `DISPLAY` is available, retaining those placement controls.
@@ -170,7 +170,7 @@ See the official [authentication](https://learn.chatgpt.com/docs/auth) and [app-
 
 Use an account card's **adjustments icon** to rename or remove it. Removing an account archives its encrypted snapshot locally; it does not sign Claude out or delete cloud chats.
 
-After you confirm, Muisland first asks Claude to close normally. On Windows, Claude keeps running in the system tray and accepts no outside quit request, so after a few seconds Muisland ends the remaining Claude Desktop processes itself (never the Claude Code CLI). Finish or save local work before confirming a close or switch, and wait a few seconds after signing in before saving so Claude has written the new session to disk.
+After you confirm, Muisland asks Claude to close normally and waits for it to finish. It does not force-terminate Claude after a timeout. If the tray instance remains open, quit it from its own tray menu and retry. Finish local work before confirming, and let a new sign-in finish loading before Save.
 
 **Saved sign-ins are not permanent credentials.** If Claude expires or revokes a session, including after a sign-out, you may need to sign in again and save the account. A local snapshot cannot undo server-side revocation.
 
@@ -219,7 +219,7 @@ https://api.anthropic.com/api/oauth/usage
 ```
 
 - Each account uses its own locally saved session; no shared API key is required or bundled.
-- Usage requests do not send chats or project files.
+- Usage requests do not send chats or project files. Cookie-only Linux Desktop sessions can use account/org-bound local usage samples, without sending browser cookies anywhere. Local readings and missing reset windows are labelled.
 - Redirects are disabled and Windows certificate validation remains enabled.
 - Credentials are not printed by the usage diagnostic.
 - Muisland does not refresh or extend Claude sessions.
@@ -268,7 +268,7 @@ Muisland polls rather than streaming updates. Allow the next refresh interval af
 <details>
 <summary><strong>Claude did not close, or is still in the tray</strong></summary>
 
-Muisland requests Claude's normal exit and, on Windows, ends the remaining Claude Desktop processes after a few seconds because the tray instance cannot be asked to quit. If Windows refuses even that, quit Claude from its own tray menu and retry. Save or finish local work first.
+Muisland requests normal exit and waits. If Claude remains in its tray or is still finishing work, the operation stops without editing authentication files. Quit Claude from its tray and retry. Muisland does not force-terminate it.
 
 </details>
 

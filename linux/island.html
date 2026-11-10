@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'none';script-src 'unsafe-inline';style-src 'unsafe-inline';connect-src 'none';base-uri 'none';form-action 'none'"
@@ -646,6 +646,13 @@
           render();
         }
       }
+      function updateAges() {
+        for (const node of document.querySelectorAll("[data-updated]")) {
+          const minutes = Math.max(0, Math.floor((Date.now()/1000 - Number(node.dataset.updated))/60));
+          node.textContent = minutes ? `Last reading ${minutes}m ago` : "Reading updated just now";
+        }
+      }
+      setInterval(updateAges, 1000);
       function resetTime(value) {
         if (!value) return "Reset unavailable";
         let t = Math.max(0, Math.floor(value - Date.now() / 1000));
@@ -700,7 +707,7 @@
             .slice(page * 2, page * 2 + 2)
             .map(
               (a) =>
-                `<article class="account"><div class="account-top"><span class="avatar">${a.slot}</span><div class="account-name"><button data-switch="${a.slot}">${esc(a.name)}</button><small>${a.draft ? "Draft · not saved" : a.active ? "Logged in" : a.saved ? "Saved" : "Not saved"}</small></div><button class="tiny" data-edit="${a.slot}" aria-label="Account details">☷</button><button class="tiny" data-save="${a.slot}">Save</button></div><div class="quotas">${quota("5h", a.usage?.session)}${quota("7d", a.usage?.weekly)}</div>${a.error ? `<div class="account-error">${esc(a.error)}</div>` : ""}</article>`,
+                `<article class="account"><div class="account-top"><span class="avatar">${a.slot}</span><div class="account-name"><button data-switch="${a.slot}">${esc(a.name)}</button><small>${a.draft ? "Draft · not saved" : a.active ? "Logged in" : a.saved ? "Saved" : "Not saved"}${a.usage?.local ? " · Claude local sample" : ""}</small></div><button class="tiny" data-edit="${a.slot}" aria-label="Account details">☷</button><button class="tiny" data-save="${a.slot}">Save</button></div><div class="quotas">${quota("5h", a.usage?.session)}${quota("7d", a.usage?.weekly)}</div>${a.usage?.updated ? `<small class="hint" data-updated="${a.usage.updated}"></small>` : ""}${a.error ? `<div class="account-error">${esc(a.error)}</div>` : ""}</article>`,
             )
             .join("");
           if (!data.accounts.length)
@@ -748,7 +755,7 @@
           content = `<h1>${title}</h1><p class="selected-name">${esc(a?.name || "")}</p><p class="confirm-copy">${pending.action === "remove" ? "The encrypted sign-in is archived locally. Your cloud chats and files are not deleted." : data.provider === "codex" ? "This changes only the Codex file sign-in cache. New CLI sessions use it; restart open Codex sessions to reload. The Desktop host may retain its own login." : pending.action === "recover" ? "Decrypt the latest local checkpoint into a separate folder. Claude’s live files will not be overwritten." : addingAnother ? `Claude is signed in as ${esc(addingAnother.name)}, which is already saved. Claude will close and reopen at its sign-in screen so you can sign in to a different account, then Save again. ${esc(addingAnother.name)} is not signed out. Local tasks may stop and unsaved work may be lost.` : "Claude will close normally and reopen. Local tasks may stop and unsaved work may be lost. Nothing changes until you confirm."}</p><div class="row-buttons"><button data-cancel>Cancel</button><button class="primary" data-confirm>Confirm</button></div>`;
         } else
           content = `<h1>Account status</h1><p class="confirm-copy">${esc(notice)}</p><button class="wide" ${data.error ? "data-retry-storage" : "data-back"}>${data.error ? "Retry keyring" : "Back"}</button>${data.error ? '<button class="wide" data-quit>Quit Muisland</button>' : ""}`;
-        root.innerHTML = `${native ? "" : '<p class="preview-label">Linux interface preview · invented accounts · no native operations</p>'}<section class="surface"><header class="header"><span class="logo">M</span><span class="brand">Muisland</span><button class="icon ${view === "prefs" ? "active" : ""}" data-prefs aria-label="Preferences">⚙</button><button class="icon" data-close aria-label="Collapse">−</button></header><nav class="providers"><button class="${data.provider === "claude" ? "active" : ""}" data-provider="claude">Claude</button><button class="${data.provider === "codex" ? "active" : ""}" data-provider="codex">Codex</button></nav><main class="content ${cls} ${data.busy ? "busy" : ""}">${content}</main><footer class="footer">${data.busy ? "Working on your account…" : data.preview ? "Preview · sample data" : data.provider === "codex" ? "Codex · file-auth profiles · 30s active / 2m others" : "Claude · 1m active / 5m other accounts"}</footer></section>`;
+        root.innerHTML = `${native ? "" : '<p class="preview-label">Linux interface preview · invented accounts · no native operations</p>'}<section class="surface"><header class="header"><span class="logo">M</span><span class="brand">Muisland</span><button class="icon ${view === "prefs" ? "active" : ""}" data-prefs aria-label="Preferences">⚙</button><button class="icon" data-close aria-label="Collapse">−</button></header><nav class="providers"><button class="${data.provider === "claude" ? "active" : ""}" data-provider="claude">Claude</button><button class="${data.provider === "codex" ? "active" : ""}" data-provider="codex">Codex</button></nav><main class="content ${cls} ${data.busy ? "busy" : ""}">${content}</main><footer class="footer">${data.version ? `Muisland ${esc(data.version)} · ` : ""}${data.busy ? "Working on your account…" : data.preview ? "Preview · sample data" : data.provider === "codex" ? "Codex · automatic usage" : "Claude · automatic usage"}</footer></section>`;
       }
       function confirm(action, slot) {
         pending = { action, slot };
@@ -769,7 +776,8 @@
         if (b.hasAttribute("data-retry-storage")) { const result = await command("retry-storage"); if (result?.settings) { data = result; view = "home"; render(); } return; }
         if (b.hasAttribute("data-reset-position")) { await invoke("reset-position"); return; }
         if (b.dataset.provider) {
-          await command("provider", { provider: b.dataset.provider });
+          const changed = await command("provider", { provider: b.dataset.provider });
+          if (!changed) return;
           view = "home";
           page = 0;
           render();
@@ -779,7 +787,8 @@
         } else if (b.hasAttribute("data-close"))
           await invoke("view", { view: "float" });
         else if (b.hasAttribute("data-add")) {
-          await command("add");
+          const added = await command("add");
+          if (!added) return;
           editing = data.accounts.at(-1).slot;
           view = "edit";
           render();
@@ -851,8 +860,8 @@
                 ? "Codex sign-in cache changed. Restart existing sessions to reload it."
                 : "";
             view = notice ? "notice" : "home";
-            render();
           }
+          render();
         } else if (b.hasAttribute("data-quit")) await invoke("quit");
       });
       root.addEventListener("change", (e) => {
@@ -867,7 +876,10 @@
           e.target.nextElementSibling.value =
             Math.round(e.target.value * 100) + "%";
       });
+      document.addEventListener("wheel", (e) => { if(e.ctrlKey) e.preventDefault(); }, {passive:false});
+      for (const name of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(name, (e)=>e.preventDefault(), {passive:false});
       document.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && ["+", "=", "-", "0"].includes(e.key)) { e.preventDefault(); return; }
         if (e.key === "Escape") {
           if (view !== "home") {
             command("discard");

@@ -16,4 +16,4 @@ done
 [[ -n "${endpoint:-}" ]] || { cat "$runtime/sway.log"; exit 1; }
 export WAYLAND_DISPLAY="$(basename "$endpoint")" GDK_BACKEND=wayland
 unset DISPLAY
-./target/release/muisland --preview --smoke-test
+"${MUISLAND_TEST_BIN:-./target/release/muisland}" --preview --smoke-test

@@ -35,5 +35,5 @@ text = pathlib.Path(source).read_text().replace('Exec=muisland', 'Exec="' + esca
 pathlib.Path(target).write_text(text)
 PY
 command -v update-desktop-database >/dev/null && update-desktop-database "$prefix/applications" || true
-echo 'Installed for this user. Open Muisland from your application launcher.'
+echo 'Installed for this user. Quit the old Muisland instance when idle, then open Muisland from your application launcher.'
 echo 'Add ~/.local/bin to PATH to use terminal commands. Autostart uses the installed absolute path.'

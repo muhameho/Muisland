@@ -237,6 +237,8 @@ class LinuxBackendTests(unittest.TestCase):
         service.handle("add")
         self.vault.write_json("claude/account-1.bin", {"previous": True})
         with patch.object(
+            backend, "claude_current_identity", return_value="first"
+        ), patch.object(
             backend, "claude_config", return_value={"lastKnownAccountUuid": "first"}
         ), patch.object(
             backend, "claude_executable", return_value="/opt/claude/claude-desktop"
@@ -263,8 +265,12 @@ class LinuxBackendTests(unittest.TestCase):
         service = backend.Service(vault=self.vault, network=False)
         service.handle("add")
         with patch.object(
+            backend, "claude_current_identity", return_value="first"
+        ), patch.object(
             backend, "claude_config", return_value={"lastKnownAccountUuid": "first"}
-        ), patch.object(backend, "claude_executable", return_value=None), patch.object(
+        ), patch.object(
+            backend, "claude_executable", return_value=None
+        ), patch.object(
             backend, "close_claude"
         ) as close:
             with self.assertRaises(FileNotFoundError):
@@ -385,11 +391,21 @@ class LinuxBackendTests(unittest.TestCase):
             if account
             else backend.encoded({"theme": "dark"})
         )
+        (home / "os-entry-points.json").write_bytes(
+            backend.encoded({"account": account, "org": "o", "enabled": True})
+        )
+        import time
+
+        os.utime(
+            home / "os-entry-points.json", (time.time() - 3600, time.time() - 3600)
+        )
         cookies = home / "Network" / "Cookies"
         if cookies.exists():
             cookies.unlink()
         db = sqlite3.connect(cookies)
-        db.execute("create table cookies (host_key text, name text, encrypted_value blob)")
+        db.execute(
+            "create table cookies (host_key text, name text, encrypted_value blob)"
+        )
         if cookie:
             db.execute("insert into cookies values ('.claude.ai', 'sessionKey', x'01')")
         db.commit()
@@ -399,7 +415,9 @@ class LinuxBackendTests(unittest.TestCase):
     def claude_patches(self, home):
         return (
             patch.dict(os.environ, {"MUISLAND_CLAUDE_CONFIG": str(home)}),
-            patch.object(backend, "claude_executable", return_value="/opt/claude/claude"),
+            patch.object(
+                backend, "claude_executable", return_value="/opt/claude/claude"
+            ),
             patch.object(backend, "claude_processes", return_value=[]),
             patch.object(backend, "close_claude"),
             patch.object(backend, "launch_claude"),
@@ -471,6 +489,9 @@ class LinuxBackendTests(unittest.TestCase):
         from urllib.error import HTTPError
 
         home = self.claude_home("first")
+        config = json.loads((home / "config.json").read_bytes())
+        config["oauth:tokenCache"] = "mocked-api-credential-fixture"
+        (home / "config.json").write_bytes(backend.encoded(config))
         service = backend.Service(vault=self.vault, network=True)
         patches = self.claude_patches(home)
         limited = HTTPError(
@@ -505,10 +526,10 @@ class LinuxBackendTests(unittest.TestCase):
                         }
                     )
                 )
-                service.next_poll.clear()
                 service.poll()
+                self.assertEqual(fetch.call_count, 1)
             row = service.state()["accounts"][0]
-            self.assertEqual(row["error"], "")
+            self.assertIn("HTTP 429", row["error"])
             self.assertEqual(row["usage"]["session"]["used"], 41)
             self.assertEqual(row["usage"]["weekly"]["used"], 17)
             # A rejected session is never papered over with local numbers.
@@ -539,6 +560,137 @@ class LinuxBackendTests(unittest.TestCase):
             shape["scopes_for_this_account"], ["user:inference", "user:profile"]
         )
         self.assertNotIn("private", json.dumps(shape))
+
+    def test_root_cookie_layout_is_saved_and_cleared_without_losing_storage_key(self):
+        home = self.claude_home("first")
+        (home / "Network" / "Cookies").rename(home / "Cookies")
+        (home / "Local State").write_text("storage-key-fixture")
+        with patch.object(backend, "claude_dir", return_value=home):
+            self.assertTrue(backend.claude_session_cookie(home))
+            snapshot = backend.capture_claude()
+            self.assertIn("Cookies", snapshot["files"])
+            backend.clear_claude_sign_in()
+            self.assertFalse((home / "Cookies").exists())
+            self.assertEqual((home / "Local State").read_text(), "storage-key-fixture")
+            backend.restore_claude(snapshot)
+            self.assertTrue(backend.claude_session_cookie(home))
+
+    def test_save_while_signed_out_opens_sign_in_without_overwriting_saved_profile(
+        self,
+    ):
+        home = self.claude_home("", cookie=False)
+        service = backend.Service(vault=self.vault, network=False)
+        service.handle("add")
+        self.vault.write_json("claude/account-1.bin", {"kept": True})
+        patches = self.claude_patches(home)
+        with patches[0], patches[1], patches[2], patches[3], patches[4] as launch:
+            state = service.handle("save", {"slot": 1, "confirmed": True})
+            self.assertIn("Complete sign-in", state["notice"])
+            launch.assert_called_once()
+        self.assertEqual(self.vault.read_json("claude/account-1.bin"), {"kept": True})
+        self.assertTrue(service.settings["claude"][0]["draft"])
+
+    def test_saved_versions_do_not_prune_the_other_provider(self):
+        for i in range(5):
+            self.vault.save_profile(
+                "claude/account-1.bin", backend.encoded({"value": i})
+            )
+            self.vault.save_profile(
+                "codex/account-1.bin", backend.encoded({"value": i})
+            )
+        versions = self.vault.root / "saved-versions"
+        self.assertEqual(len(list((versions / "claude").iterdir())), 3)
+        self.assertEqual(len(list((versions / "codex").iterdir())), 3)
+
+    def test_remembered_account_without_session_is_not_logged_in(self):
+        home = self.claude_home("first", cookie=False)
+        with patch.object(backend, "claude_dir", return_value=home):
+            self.assertIsNone(
+                backend.Service(vault=self.vault, network=False).current("claude")
+            )
+
+    def test_cookie_only_login_reads_bound_local_usage_without_oauth(self):
+        import time
+
+        home = self.claude_home("first")
+        (home / "Network" / "Cookies").rename(home / "Cookies")
+        (home / "plan-usage-history.json").write_bytes(
+            backend.encoded(
+                {"samples": [{"t": time.time() * 1000, "org": "o", "u": {"fh": 43}}]}
+            )
+        )
+        service = backend.Service(vault=self.vault, network=True)
+        patches = self.claude_patches(home)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patch.object(
+            backend, "claude_usage"
+        ) as network:
+            service.handle("add")
+            service.handle("save", {"slot": 1, "confirmed": True})
+            service.poll()
+            row = service.state()["accounts"][0]
+            self.assertTrue(row["active"])
+            self.assertEqual(row["usage"]["session"]["used"], 43)
+            self.assertIsNone(row["usage"]["weekly"])
+            self.assertEqual(row["error"], "")
+            network.assert_not_called()
+
+    def test_local_usage_rejects_wrong_account_org_and_prelogin_sample(self):
+        import time
+
+        home = self.claude_home("first")
+        history = home / "plan-usage-history.json"
+        history.write_bytes(
+            backend.encoded(
+                {"samples": [{"t": time.time() * 1000, "org": "o", "u": {"fh": 43}}]}
+            )
+        )
+        with patch.object(backend, "claude_dir", return_value=home):
+            self.assertIsNotNone(backend.claude_local_usage(expected_account="first"))
+            self.assertIsNone(backend.claude_local_usage(expected_account="second"))
+            history.write_bytes(
+                backend.encoded(
+                    {
+                        "samples": [
+                            {"t": time.time() * 1000, "org": "wrong", "u": {"fh": 43}}
+                        ]
+                    }
+                )
+            )
+            self.assertIsNone(backend.claude_local_usage(expected_account="first"))
+            history.write_bytes(
+                backend.encoded(
+                    {
+                        "samples": [
+                            {
+                                "t": (time.time() - 3500) * 1000,
+                                "org": "o",
+                                "u": {"fh": 43},
+                            }
+                        ]
+                    }
+                )
+            )
+            os.utime(home / "os-entry-points.json", None)
+            self.assertIsNone(backend.claude_local_usage(expected_account="first"))
+
+    def test_hyprland_uses_available_secure_keyring_without_basic_fallback(self):
+        with patch.dict(
+            os.environ,
+            {"XDG_CURRENT_DESKTOP": "Hyprland", "MUISLAND_CLAUDE_PASSWORD_STORE": ""},
+        ), patch.object(
+            backend.shutil, "which", return_value="secret-tool"
+        ), patch.object(
+            backend.subprocess, "run"
+        ) as lookup:
+            lookup.return_value.returncode = 0
+            lookup.return_value.stdout = b"disposable-key-fixture"
+            self.assertEqual(
+                backend.claude_launch_arguments(), ["--password-store=gnome-libsecret"]
+            )
+            lookup.return_value.returncode = 1
+            self.assertEqual(backend.claude_launch_arguments(), [])
+        with patch.dict(os.environ, {"MUISLAND_CLAUDE_PASSWORD_STORE": "default"}):
+            self.assertEqual(backend.claude_launch_arguments(), [])
 
 
 if __name__ == "__main__":

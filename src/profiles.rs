@@ -92,7 +92,16 @@ pub fn account_dir(index: usize) -> io::Result<PathBuf> {
     Ok(base()?.join(format!("account-{index}")))
 }
 fn auth_items() -> &'static [&'static str] {
-    &["Local State", "Network", "Local Storage", "Session Storage"]
+    &[
+        "Local State",
+        "Network",
+        "Local Storage",
+        "Session Storage",
+        "Cookies",
+        "Cookies-wal",
+        "Cookies-shm",
+        "Cookies-journal",
+    ]
 }
 fn config_keys() -> &'static [&'static str] {
     &[
@@ -356,33 +365,10 @@ pub fn close_claude_for_save() -> io::Result<()> {
             std::thread::sleep(Duration::from_millis(150));
         }
     };
-    if wait(Duration::from_secs(4))? {
+    if wait(Duration::from_secs(15))? {
         return Ok(());
     }
-    // Closing Claude's window only sends it to the system tray, and it accepts no
-    // outside request to quit from there. The user already confirmed the close, so
-    // end what is left instead of asking them to find the tray icon.
-    for _ in 0..3 {
-        end_desktop_processes()?;
-        if wait(Duration::from_secs(3))? {
-            return Ok(());
-        }
-    }
-    Err(io::Error::other("Claude could not be closed. Quit it from its tray icon, then retry. Nothing was saved or changed."))
-}
-fn end_desktop_processes() -> io::Result<()> {
-    use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::*};
-    for (pid, _) in desktop_processes()? {
-        unsafe {
-            let process = OpenProcess(PROCESS_TERMINATE, 0, pid);
-            // A process that already exited cannot be opened; that is the goal.
-            if !process.is_null() {
-                TerminateProcess(process, 0);
-                CloseHandle(process);
-            }
-        }
-    }
-    Ok(())
+    Err(io::Error::other("Claude is still running in its tray or finishing work. Quit it normally from its tray, then retry. No account files were changed and Muisland did not force-close it."))
 }
 pub fn claude_running() -> bool {
     desktop_processes().map(|p| !p.is_empty()).unwrap_or(true)
@@ -513,6 +499,60 @@ fn collect_decrypted(src: &Path, dst: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) 
     Ok(())
 }
 
+// Windows ships SQLite with the OS; keep the native build dependency-free.
+#[link(name = "winsqlite3")]
+unsafe extern "C" {
+    fn sqlite3_open_v2(
+        path: *const i8,
+        db: *mut *mut core::ffi::c_void,
+        flags: i32,
+        vfs: *const i8,
+    ) -> i32;
+    fn sqlite3_prepare_v2(
+        db: *mut core::ffi::c_void,
+        sql: *const i8,
+        bytes: i32,
+        statement: *mut *mut core::ffi::c_void,
+        tail: *mut *const i8,
+    ) -> i32;
+    fn sqlite3_step(statement: *mut core::ffi::c_void) -> i32;
+    fn sqlite3_finalize(statement: *mut core::ffi::c_void) -> i32;
+    fn sqlite3_close(db: *mut core::ffi::c_void) -> i32;
+}
+pub fn session_cookie_present(root: &Path) -> bool {
+    for relative in ["Network/Cookies", "Cookies"] {
+        let path = root.join(relative);
+        if !path.is_file() || path.is_symlink() {
+            continue;
+        }
+        let Ok(path) = std::ffi::CString::new(path.to_string_lossy().as_bytes()) else {
+            continue;
+        };
+        let mut db = std::ptr::null_mut();
+        let mut statement = std::ptr::null_mut();
+        // Names only. This read-only connection includes live WAL records.
+        let sql = c"SELECT 1 FROM cookies WHERE name='sessionKey' AND host_key IN ('claude.ai','.claude.ai','claude.com','.claude.com') LIMIT 1";
+        let found = unsafe {
+            let opened = sqlite3_open_v2(path.as_ptr(), &mut db, 1, std::ptr::null()) == 0;
+            let ready = opened
+                && sqlite3_prepare_v2(db, sql.as_ptr(), -1, &mut statement, std::ptr::null_mut())
+                    == 0;
+            let row = ready && sqlite3_step(statement) == 100;
+            if !statement.is_null() {
+                sqlite3_finalize(statement);
+            }
+            if !db.is_null() {
+                sqlite3_close(db);
+            }
+            row
+        };
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn account_identity(index: usize) -> io::Result<String> {
     let config: Value = json(serde_json::from_slice(&dpapi(
         &fs::read(account_dir(index)?.join("auth.json"))?,
@@ -641,7 +681,11 @@ fn clear_sign_in(dest: &Path) -> io::Result<()> {
         object.remove(*key);
     }
     // "Local State" holds this computer's storage key, not a sign-in; it stays.
-    for item in ["Network", "Local Storage", "Session Storage"] {
+    for item in auth_items()
+        .iter()
+        .copied()
+        .filter(|item| *item != "Local State")
+    {
         let path = dest.join(item);
         if path.is_dir() {
             fs::remove_dir_all(path)?;
@@ -661,8 +705,13 @@ pub fn sign_in_another(saved_slot: usize, identity: &str) -> io::Result<()> {
     check_closed()?;
     capture(saved_slot, identity)?;
     let dest = find_claude()?;
-    save_snapshot(&dest, &base()?.join("last-switch-backup"))?;
-    clear_sign_in(&dest)
+    let backup = base()?.join("last-switch-backup");
+    save_snapshot(&dest, &backup)?;
+    if let Err(error) = clear_sign_in(&dest) {
+        let restored = restore_snapshot(&backup, &dest).is_ok();
+        return Err(io::Error::other(format!("Could not prepare another sign-in: {error}. Previous session restored: {restored}. Backup kept.")));
+    }
+    Ok(())
 }
 pub fn switch(index: usize, protect_local: bool) -> io::Result<()> {
     if is_current(index).unwrap_or(false) {
@@ -870,5 +919,51 @@ mod tests {
             assert_eq!(quit_menu_command(menu, 0), Some(12));
             DestroyMenu(menu);
         }
+    }
+}
+
+#[cfg(test)]
+mod cookie_layout_tests {
+    use super::*;
+    unsafe extern "C" {
+        fn sqlite3_exec(
+            db: *mut core::ffi::c_void,
+            sql: *const i8,
+            callback: *const core::ffi::c_void,
+            data: *mut core::ffi::c_void,
+            error: *mut *mut i8,
+        ) -> i32;
+    }
+    #[test]
+    fn root_and_network_cookies_are_recognised_without_oauth() {
+        let root =
+            std::env::temp_dir().join(format!("muisland-cookie-layout-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("Network")).unwrap();
+        let path =
+            std::ffi::CString::new(root.join("Cookies").to_string_lossy().as_bytes()).unwrap();
+        let mut db = std::ptr::null_mut();
+        unsafe {
+            assert_eq!(
+                sqlite3_open_v2(path.as_ptr(), &mut db, 6, std::ptr::null()),
+                0
+            );
+            assert_eq!(sqlite3_exec(db, c"CREATE TABLE cookies(name TEXT,host_key TEXT); INSERT INTO cookies VALUES('sessionKey','.evilclaude.ai')".as_ptr(), std::ptr::null(), std::ptr::null_mut(), std::ptr::null_mut()),0);
+            assert!(!session_cookie_present(&root));
+            assert_eq!(
+                sqlite3_exec(
+                    db,
+                    c"INSERT INTO cookies VALUES('sessionKey','.claude.ai')".as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut()
+                ),
+                0
+            );
+            sqlite3_close(db);
+        }
+        assert!(session_cookie_present(&root));
+        std::fs::rename(root.join("Cookies"), root.join("Network/Cookies")).unwrap();
+        assert!(session_cookie_present(&root));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

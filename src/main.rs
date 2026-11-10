@@ -196,6 +196,7 @@ mod island {
         Already(usize),
         /// Claude reopened signed out locally; the payload is the slot that kept its account.
         SignIn(usize),
+        LoginRequired,
     }
     struct SyncResult {
         generation: u64,
@@ -2273,9 +2274,10 @@ mod island {
                     }
                 }
                 if provider == 0
-                    && matches!(op, Op::Save(_) | Op::Switch(_))
                     && !confirmed
-                    && (preview || profiles::claude_running())
+                    && (matches!(op, Op::Rollback)
+                        || (matches!(op, Op::Save(_) | Op::Switch(_))
+                            && (preview || profiles::claude_running())))
                 {
                     return Ok(Outcome::NeedsClose(op));
                 }
@@ -2302,7 +2304,15 @@ mod island {
                 }
                 let launch = profiles::claude_launch_target();
                 let expected = if matches!(op, Op::Save(_)) {
-                    Some(usage::current_account_identity().map_err(|_|"Claude's signed-in session is not ready on disk. Finish signing in and let Claude load before saving. Your previous saved account was kept.".to_string())?)
+                    Some(match usage::current_account_identity() {
+                        Ok(identity) => identity,
+                        Err(_) => {
+                            launch.open().map_err(|_| {
+                                "Open Claude Desktop, sign in, then choose Save again.".to_string()
+                            })?;
+                            return Ok(Outcome::LoginRequired);
+                        }
+                    })
                 } else {
                     None
                 };
@@ -2336,13 +2346,21 @@ mod island {
                         Ok(Outcome::Done(op, "Account saved · Claude reopened".into()))
                     }
                     Op::Switch(_) => {
-                        profiles::switch(slot, protect).map_err(|e| e.to_string())?;
-                        launch.open().map_err(|_|"Account switched, but Claude could not reopen. Open Claude manually.".to_string())?;
+                        let switched = profiles::switch(slot, protect);
+                        let reopened = launch.open();
+                        switched.map_err(|e| e.to_string())?;
+                        reopened.map_err(|_|"Account switched, but Claude could not reopen. Open Claude manually.".to_string())?;
                         Ok(Outcome::Done(op, "Switched successfully".into()))
                     }
                     Op::Rollback => {
-                        profiles::restore_backup().map_err(|e| e.to_string())?;
-                        Ok(Outcome::Done(op, "Previous sign-in restored".into()))
+                        let restored = profiles::restore_backup();
+                        let reopened = launch.open();
+                        restored.map_err(|e| e.to_string())?;
+                        reopened.map_err(|_| "Previous sign-in restored, but Claude could not reopen. Open Claude manually.".to_string())?;
+                        Ok(Outcome::Done(
+                            op,
+                            "Previous sign-in restored · Claude reopened".into(),
+                        ))
                     }
                     Op::Recover => {
                         let path = crate::backup::recover_latest().map_err(|e| e.to_string())?;
@@ -2742,6 +2760,23 @@ mod island {
                 s.last = now;
                 let t = s.clock.elapsed().as_secs_f32();
                 let before_position = (s.anchor, s.top);
+                if !s.open && GetAsyncKeyState(0x01) < 0 {
+                    if let Some((dx, dy, _)) = s.down {
+                        if drag_zone(s, dx, dy) {
+                            let mut pointer = zeroed();
+                            GetCursorPos(&mut pointer);
+                            let anchor = (pointer.x - s.origin.0) as f32 + s.w * s.scale / 2.;
+                            let top = pointer.y - s.origin.1;
+                            if s.drag || (anchor - s.anchor).abs() > 4. || (top - s.top).abs() > 4 {
+                                s.drag = true;
+                                s.anchor = anchor;
+                                s.top = top;
+                                s.float_position = (anchor, top);
+                                constrain(s);
+                            }
+                        }
+                    }
+                }
                 let before = (
                     s.w,
                     s.h,
@@ -2962,6 +2997,9 @@ mod island {
                                 navigate(s, View::Confirm(op), false);
                                 s.focus = Action::Cancel;
                             }
+                        }
+                        Ok(Outcome::LoginRequired) => {
+                            notice(s, "Sign in to Claude", "Claude opened. Complete sign-in there, then choose Save again. Your existing saved accounts were kept.", false);
                         }
                         Ok(Outcome::SignIn(slot)) => {
                             let name = s

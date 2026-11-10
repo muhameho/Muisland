@@ -584,6 +584,17 @@ fn current_credential() -> io::Result<(String, Credential)> {
     Err(io::Error::other("Claude's current sign-in is unavailable"))
 }
 pub fn current_account_identity() -> io::Result<String> {
+    let root = profiles::find_claude()?;
+    if profiles::session_cookie_present(&root) {
+        let config: Value = serde_json::from_slice(&fs::read(root.join("config.json"))?)
+            .map_err(|_| io::Error::other("Could not read Claude account"))?;
+        if let Some(id) = config["lastKnownAccountUuid"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+        {
+            return Ok(id.into());
+        }
+    }
     current_credential().map(|(id, _)| id)
 }
 pub fn fetch_current() -> io::Result<Usage> {
