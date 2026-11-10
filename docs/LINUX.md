@@ -14,7 +14,7 @@ sudo apt install ./muisland_0.5.1_amd64.deb
 
 Open **Muisland** in your application launcher. Installing with `apt` resolves runtime dependencies. An unlocked desktop Secret Service keyring (GNOME Keyring, or an equivalent provider) is required for encrypted profiles. Installing a keyring package does not silently unlock or migrate an existing keyring.
 
-Ubuntu 22.04 and 24.04 build jobs exercise their own system Python, GTK, WebKitGTK, Secret Service, X11 and headless Wayland environments. Additional runtime jobs cover Debian 12, Fedora 44, Arch rolling, openSUSE Tumbleweed, and Alpine 3.23 (musl). Pick the 22.04 build for its older glibc baseline. ARM64 can be built from source on ARM64; the hosted downloadable artifacts are x86-64.
+Ubuntu 22.04 and 24.04 build jobs exercise their own system Python, GTK, WebKitGTK, Secret Service, X11 and headless Wayland environments. Additional runtime jobs cover Debian 12, Fedora 44, Arch rolling, openSUSE Tumbleweed, and Alpine 3.23 (musl). Pick the 22.04 build for its older glibc baseline. Compiled launchers are x86-64; the **linux-any** archive has no architecture-specific launcher and uses the target machine’s native Python/GTK libraries. Other CPU architectures have not been separately tested on hardware.
 
 ## Portable archive / other distributions
 
