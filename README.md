@@ -363,6 +363,6 @@ Include your Windows version, Claude Desktop version, steps to reproduce, and th
 
 ### Usage rings, hover cards and alerts
 
-The floating circle uses an inner session (5-hour for Claude) ring and a blue outer weekly ring. Choose M or a numeric session percentage, Capsule/Card/Message hover shapes, and Smart hover/Compact/Detailed density in Preferences. Smart hover expands after a short pause; bubble size stays independent of floating size.
+The floating circle uses an inner session (5-hour for Claude) ring and a blue outer weekly ring. Choose M or a numeric session percentage in Preferences. The hover bubble always shows both usage windows and available reset times; its size stays independent of floating size.
 
 Usage alerts and automatic switching are opt-in. Set separate session and weekly percentages (5–100%). Auto-switch selects a saved, distinct account with recent usage below both limits. It shows a 15-second cancellable countdown inside the Island. Closing the Island cancels it. “Ask first when work may be open” is enabled by default: Claude being open, or Codex sessions whose idle state is unknown, requires confirmation instead of unattended switching. Muisland cannot reliably detect all running projects. Switching may stop tasks; Codex sessions must restart to reload credentials, and chats are not transferred between accounts. Failed/stale quota readings never trigger automatic switching.

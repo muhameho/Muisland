@@ -154,8 +154,6 @@ mod island {
         MenuSlider,
         FloatSlider,
         BubbleSlider,
-        BubbleStyle,
-        BubbleDensity,
         CircleNumbers,
         UsageAlerts,
         SessionThreshold,
@@ -221,7 +219,6 @@ mod island {
         peek_until: f32,
         bubble: HWND,
         bubble_alpha: f32,
-        bubble_detail: f32,
         w: f32,
         h: f32,
         vw: f32,
@@ -244,7 +241,6 @@ mod island {
         slider_drag: Option<Action>,
         slider_preview: Option<f32>,
         prefs_scroll: i32,
-        hover_since: f32,
         pulse_until: f32,
         toast_until: f32,
         ring_session: Option<f64>,
@@ -686,16 +682,14 @@ mod island {
                 if s.settings.provider == 0 {
                     add(Action::Recover, 24, 570, 372, 34);
                 }
-                add(Action::BubbleStyle, 24, 620, 372, 36);
-                add(Action::BubbleDensity, 24, 664, 372, 36);
-                add(Action::CircleNumbers, 24, 708, 372, 48);
-                add(Action::UsageAlerts, 24, 784, 372, 48);
-                add(Action::SessionThreshold, 154, 848, 140, 30);
-                add(Action::WeeklyThreshold, 154, 894, 140, 30);
-                add(Action::AutoSwitch, 24, 940, 372, 48);
-                add(Action::PauseForWork, 24, 998, 372, 48);
-                add(Action::Back, 24, 1138, 178, 34);
-                add(Action::Quit, 210, 1138, 186, 34);
+                add(Action::CircleNumbers, 24, 620, 372, 48);
+                add(Action::UsageAlerts, 24, 750, 372, 48);
+                add(Action::SessionThreshold, 154, 814, 140, 30);
+                add(Action::WeeklyThreshold, 154, 860, 140, 30);
+                add(Action::AutoSwitch, 24, 914, 372, 48);
+                add(Action::PauseForWork, 24, 972, 372, 48);
+                add(Action::Back, 24, 1116, 178, 34);
+                add(Action::Quit, 210, 1116, 186, 34);
             }
             View::Remove(_, _) => {
                 add(Action::Cancel, 24, 312, 120, 42);
@@ -1371,7 +1365,7 @@ mod island {
                     123,
                     12,
                     400,
-                    "Independent sizes · scroll for hover cards & alerts",
+                    "Independent sizes · scroll for usage alerts",
                     muted(),
                     372,
                 );
@@ -1428,67 +1422,40 @@ mod island {
                     );
                 }
 
-                button(
-                    dc,
-                    s,
-                    Action::BubbleStyle,
-                    24,
-                    620,
-                    372,
-                    36,
-                    &format!(
-                        "Bubble shape: {}",
-                        ["Capsule", "Card", "Message"][s.settings.bubble_style.min(2)]
-                    ),
-                    false,
-                );
-                button(
-                    dc,
-                    s,
-                    Action::BubbleDensity,
-                    24,
-                    664,
-                    372,
-                    36,
-                    &format!(
-                        "Bubble detail: {}",
-                        ["Smart hover", "Compact", "Detailed"][s.settings.bubble_density.min(2)]
-                    ),
-                    false,
-                );
                 toggle(
                     dc,
                     s,
                     Action::CircleNumbers,
-                    708,
+                    620,
                     "Show percentage instead of M",
                     s.settings.circle_numbers,
                 );
+                text(dc, 40, 692, 18, 600, "Alerts & auto-switch", white(), 372);
                 text(
                     dc,
-                    24,
-                    764,
-                    16,
-                    600,
-                    "Usage alerts & switching",
-                    white(),
-                    372,
+                    40,
+                    720,
+                    11,
+                    400,
+                    "Choose a limit for each usage window.",
+                    muted(),
+                    340,
                 );
                 toggle(
                     dc,
                     s,
                     Action::UsageAlerts,
-                    784,
+                    750,
                     "Notify at usage thresholds",
                     s.settings.usage_alerts,
                 );
-                size_slider(dc, s, Action::SessionThreshold, 863, "Session alert");
-                size_slider(dc, s, Action::WeeklyThreshold, 909, "Weekly alert");
+                size_slider(dc, s, Action::SessionThreshold, 829, "Session limit");
+                size_slider(dc, s, Action::WeeklyThreshold, 875, "Weekly limit");
                 toggle(
                     dc,
                     s,
                     Action::AutoSwitch,
-                    940,
+                    914,
                     "Auto-switch at these limits",
                     s.settings.auto_switch,
                 );
@@ -1496,13 +1463,13 @@ mod island {
                     dc,
                     s,
                     Action::PauseForWork,
-                    998,
+                    972,
                     "Ask first when work may be open",
                     s.settings.pause_for_work,
                 );
-                paragraph(dc,25,1060,"Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed.",muted());
-                button(dc, s, Action::Back, 24, 1138, 178, 34, "Back", false);
-                button(dc, s, Action::Quit, 210, 1138, 186, 34, "Quit", false);
+                paragraph(dc,25,1034,"Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed.",muted());
+                button(dc, s, Action::Back, 24, 1116, 178, 34, "Back", false);
+                button(dc, s, Action::Quit, 210, 1116, 186, 34, "Quit", false);
             }
             View::AutoSwitch(i) => {
                 text(dc, 24, 89, 24, 600, "Usage limit reached", white(), 372);
@@ -2176,10 +2143,7 @@ mod island {
     }
     unsafe fn render_bubble(s: &State, scale: f32, right: bool, tail: f32) -> Option<Surface> {
         ACTIVE_THEME.with(|v| v.set(s.settings.theme));
-        let detailed = s.settings.bubble_density == 2
-            || (s.settings.bubble_density == 0
-                && s.clock.elapsed().as_secs_f32() - s.hover_since > 0.85);
-        let height = 100. + (BUBBLE_H - 100.) * s.bubble_detail;
+        let height = BUBBLE_H;
         let source = Surface::new(BUBBLE_W as i32 * 2, height as i32 * 2);
         if source.bits.is_null() {
             return None;
@@ -2230,105 +2194,44 @@ mod island {
             })
             .unwrap_or_else(|| "Usage not available yet".into());
         text(source.dc, inset + 20, 43, 10, 400, &caption, muted(), 252);
-        if detailed && s.bubble_detail > 0.65 {
-            line(
-                source.dc,
-                &[(inset + 20, 65), (inset + 276, 65)],
-                1,
-                0x00433732,
-            );
-            quota(
-                source.dc,
-                inset + 20,
-                77,
-                256,
-                if s.settings.provider == 1 {
-                    "Session"
-                } else {
-                    "5h"
-                },
-                u.and_then(|u| u.session.as_ref()),
-            );
-            quota(
-                source.dc,
-                inset + 20,
-                131,
-                256,
-                if s.settings.provider == 1 {
-                    "Extended"
-                } else {
-                    "7d"
-                },
-                u.and_then(|u| u.weekly.as_ref()),
-            );
-        } else {
-            let value = |w: Option<&Window>| {
-                w.map(|w| format!("{:.0}%", w.used))
-                    .unwrap_or_else(|| "—".into())
-            };
-            text(
-                source.dc,
-                inset + 20,
-                69,
-                13,
-                600,
-                &format!(
-                    "{} {}",
-                    if s.settings.provider == 1 {
-                        "Session"
-                    } else {
-                        "5h"
-                    },
-                    value(u.and_then(|u| u.session.as_ref()))
-                ),
-                accent(),
-                125,
-            );
-            text(
-                source.dc,
-                inset + 157,
-                69,
-                13,
-                600,
-                &format!(
-                    "{} {}",
-                    if s.settings.provider == 1 {
-                        "Extended"
-                    } else {
-                        "7d"
-                    },
-                    value(u.and_then(|u| u.weekly.as_ref()))
-                ),
-                0x00E8C17F,
-                125,
-            );
-        }
+        line(
+            source.dc,
+            &[(inset + 20, 65), (inset + 276, 65)],
+            1,
+            0x00433732,
+        );
+        quota(
+            source.dc,
+            inset + 20,
+            77,
+            256,
+            if s.settings.provider == 1 {
+                "Session"
+            } else {
+                "5h"
+            },
+            u.and_then(|u| u.session.as_ref()),
+        );
+        quota(
+            source.dc,
+            inset + 20,
+            131,
+            256,
+            if s.settings.provider == 1 {
+                "Extended"
+            } else {
+                "7d"
+            },
+            u.and_then(|u| u.weekly.as_ref()),
+        );
         compose(&source, BUBBLE_W, height, scale, |x, y| {
-            let body = rounded_alpha(
-                x,
-                y,
-                inset as f32,
-                0.,
-                296.,
-                height,
-                if s.settings.bubble_style == 0 {
-                    32.
-                } else if s.settings.bubble_style == 1 {
-                    14.
-                } else {
-                    22.
-                },
-            );
+            let body = rounded_alpha(x, y, inset as f32, 0., 296., height, 22.);
             let depth = if right { x } else { BUBBLE_W - x };
             // Symmetric triangle overlaps the body to avoid a hairline seam.
             let triangle = ((depth - (y - tail.min(height - 22.)).abs()) / 2f32.sqrt() + 0.5)
                 .clamp(0., 1.)
                 * (12.5 - depth).clamp(0., 1.);
-            if s.settings.bubble_style == 2 {
-                body.max(triangle)
-            } else {
-                body
-            }
+            body.max(triangle)
         })
     }
     unsafe fn paint_bubble(s: &State) {
@@ -2451,6 +2354,7 @@ mod island {
             "circle-hover-left",
             "three-accounts",
             "small-size",
+            "usage-settings",
             "usage-updates",
         ] {
             s.open = true;
@@ -2463,10 +2367,9 @@ mod island {
             s.edit_focus = false;
             s.transition = 1.;
             s.reveal = 1.;
-            s.bubble_detail = 1.;
-            s.settings.bubble_density = 2;
             match name{
                 "preferences"=>s.view=View::Preferences,
+                "usage-settings"=>{s.view=View::Preferences;s.prefs_scroll=550;},
                 "remove-account"=>s.view=View::Remove(0,"Personal".into()),
                 "account-name"=>{s.view=View::Details(0);s.edit="حساب الشغل".encode_utf16().collect();s.caret=s.edit.len();s.edit_focus=true;s.selected=true;},
                 "already-logged-in"=>s.view=View::Notice("Already logged in".into(),"Personal is the account currently logged into Claude. No switch was needed and Claude was left untouched.".into()),
@@ -3108,14 +3011,6 @@ mod island {
             | Action::BubbleSlider
             | Action::SessionThreshold
             | Action::WeeklyThreshold => {}
-            Action::BubbleStyle => {
-                s.settings.bubble_style = (s.settings.bubble_style + 1) % 3;
-                persist(s);
-            }
-            Action::BubbleDensity => {
-                s.settings.bubble_density = (s.settings.bubble_density + 1) % 3;
-                persist(s);
-            }
             Action::CircleNumbers => {
                 s.settings.circle_numbers = !s.settings.circle_numbers;
                 persist(s);
@@ -3436,9 +3331,7 @@ mod island {
                     if on_bubble
                         || (inside && ((x - 38.).powi(2) + (y - 38.).powi(2) < 38f32.powi(2)))
                     {
-                        if !s.peek {
-                            s.hover_since = t;
-                        }
+                        if !s.peek {}
                         s.peek = true;
                         s.peek_until = t + 0.3;
                     } else if t > s.peek_until {
@@ -3483,18 +3376,6 @@ mod island {
                         }
                     });
                 }
-                let detail_target = if s.settings.bubble_density == 2
-                    || (s.settings.bubble_density == 0 && t - s.hover_since > 0.85)
-                {
-                    1.
-                } else {
-                    0.
-                };
-                s.bubble_detail = if s.settings.reduced_motion {
-                    detail_target
-                } else {
-                    s.bubble_detail + (detail_target - s.bubble_detail) * (dt * 12.).min(1.)
-                };
                 let bubble_target = if (s.peek || s.toast_until > t)
                     && (s.w - CIRCLE).abs() < 0.1
                     && (s.h - CIRCLE).abs() < 0.1
@@ -3701,7 +3582,6 @@ mod island {
                         Ok(Outcome::Done(op, label)) => {
                             if matches!(op, Op::Switch(_)) {
                                 s.toast_until = t + 2.;
-                                s.hover_since = t;
                             }
                             let visible = s.open;
                             if let Op::Save(i) = op {
@@ -3852,7 +3732,7 @@ mod island {
                 if s.open && matches!(s.view, View::Preferences) && s.slider_drag.is_none() {
                     let delta = ((wp >> 16) as u16) as i16;
                     s.prefs_scroll =
-                        (s.prefs_scroll - (delta as f32 / 120. * 40.).round() as i32).clamp(0, 644);
+                        (s.prefs_scroll - (delta as f32 / 120. * 40.).round() as i32).clamp(0, 610);
                     InvalidateRect(hwnd, null_mut(), 0);
                 }
                 0
@@ -3889,7 +3769,7 @@ mod island {
                 let key = wp as u32;
                 if matches!(s.view, View::Preferences) && [0x21, 0x22].contains(&key) {
                     s.prefs_scroll =
-                        (s.prefs_scroll + if key == 0x22 { 100 } else { -100 }).clamp(0, 644);
+                        (s.prefs_scroll + if key == 0x22 { 100 } else { -100 }).clamp(0, 610);
                 } else if matches!(s.view, View::Preferences)
                     && slider_bounds(s.focus).is_some()
                     && [0x25, 0x27, 0x24, 0x23].contains(&key)
@@ -4018,7 +3898,6 @@ mod island {
             peek_until: 0.,
             bubble: null_mut(),
             bubble_alpha: 0.,
-            bubble_detail: 0.,
             w: if circle { CIRCLE } else { PILL_W },
             h: if circle { CIRCLE } else { PILL_H },
             vw: 0.,
@@ -4041,7 +3920,6 @@ mod island {
             slider_drag: None,
             slider_preview: None,
             prefs_scroll: 0,
-            hover_since: 0.,
             pulse_until: 0.,
             toast_until: 0.,
             ring_session: None,
@@ -4275,8 +4153,7 @@ mod island {
         }
         #[test]
         fn bubble_has_transparent_corners_and_tail_on_correct_side() {
-            let mut s = initial(true, 0., 0);
-            s.bubble_detail = 1.;
+            let s = initial(true, 0., 0);
             for right in [false, true] {
                 let image = unsafe { render_bubble(&s, 1., right, 94.) }.unwrap();
                 let pixels = unsafe {
@@ -4507,7 +4384,7 @@ mod island {
             s.reveal = 1.;
             s.transition = 1.;
             assert!(!buttons(&s).iter().any(|b| b.action == Action::Quit));
-            s.prefs_scroll = 644;
+            s.prefs_scroll = 610;
             assert!(buttons(&s).iter().any(|b| b.action == Action::Quit));
             assert_eq!(hit(&s, 110, 80), Action::ClaudeTab);
             for button in buttons(&s).iter().skip(5) {

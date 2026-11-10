@@ -1034,8 +1034,6 @@ class Service:
             "bubble_scale": 1.0,
             "circle": True,
             "reduced_motion": False,
-            "bubble_style": 2,
-            "bubble_density": 0,
             "circle_numbers": False,
             "usage_alerts": False,
             "session_threshold": 0.8,
@@ -1049,6 +1047,8 @@ class Service:
         }
         if not preview and self.vault.exists("settings.bin"):
             self.settings.update(self.vault.read_json("settings.bin"))
+        for obsolete in ("bubble_style", "bubble_density"):
+            self.settings.pop(obsolete, None)
         if not preview:
             for provider in ("claude", "codex"):
                 for row in self.settings[provider]:
@@ -1480,9 +1480,6 @@ class Service:
                 ):
                     if key in data:
                         self.settings[key] = bool(data[key])
-                for key in ("bubble_style", "bubble_density"):
-                    if key in data:
-                        self.settings[key] = max(0, min(2, int(data[key])))
                 if any(
                     k in data
                     for k in (
