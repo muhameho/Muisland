@@ -52,19 +52,63 @@ def relative(name):
     return p
 
 
-def safe_files(root):
+# Folders Claude downloads or rebuilds by itself; backing them up made each
+# checkpoint gigabytes and tens of thousands of cache files. Same list as Windows.
+BACKUP_SKIPPED = (
+    "claude-code",
+    "claude-code-vm",
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "GrShaderCache",
+    "GraphiteDawnCache",
+    "ShaderCache",
+    "DawnWebGPUCache",
+    "DawnGraphiteCache",
+    "GPUPersistentCache",
+    "Crashpad",
+    "sentry",
+    "logs",
+    "Service Worker/CacheStorage",
+    "Service Worker/ScriptCache",
+)
+BACKUPS_KEPT = 3
+
+
+# The Cowork VM folder holds a downloadable base image next to the VM's own
+# data disk; only the data disk is backed up.
+BACKUP_VM_FOLDER = "vm_bundles"
+BACKUP_VM_KEPT = ("sessiondata.vhdx",)
+
+
+def backup_skipped(relative_path, is_dir=True):
+    name = relative_path.lower()
+    under = lambda folder: name == folder.lower() or name.startswith(folder.lower() + "/")
+    if under(BACKUP_VM_FOLDER):
+        return not is_dir and name.rsplit("/", 1)[-1] not in BACKUP_VM_KEPT
+    return any(under(skip) for skip in BACKUP_SKIPPED)
+
+
+def safe_files(root, skip=None):
     root = Path(root)
     if root.is_symlink():
         raise ValueError("Linked app-data folders are not supported")
     for folder, dirs, files in os.walk(
         root, followlinks=False, onerror=lambda error: (_ for _ in ()).throw(error)
     ):
+        if skip:
+            here = Path(folder).relative_to(root)
+            dirs[:] = [
+                d for d in dirs if not skip((here / d).as_posix())
+            ]
         for name in dirs + files:
             path = Path(folder) / name
             if path.is_symlink():
                 raise ValueError("Backups do not follow symbolic links")
         for name in files:
             path = Path(folder) / name
+            if skip and skip(path.relative_to(root).as_posix(), False):
+                continue
             if path.is_file():
                 yield path
 
@@ -196,7 +240,7 @@ class Vault:
         prefix = "backups/" + stamp
         rows = []
         counter = 0
-        for path in safe_files(source):
+        for path in safe_files(source, skip=backup_skipped):
             name = path.relative_to(source).as_posix()
             relative(name)
             chunks = []
@@ -212,7 +256,19 @@ class Vault:
             rows.append({"path": name, "chunks": chunks})
         self.write_json(prefix + "/manifest.bin", rows)
         self.write_json("latest-backup.bin", {"prefix": prefix})
+        self.prune_backups()
         return stamp
+
+    def prune_backups(self, keep=BACKUPS_KEPT):
+        folder = self.root / "backups"
+        if not folder.is_dir():
+            return
+        stamps = sorted(
+            (p for p in folder.iterdir() if p.is_dir() and p.name.isdigit()),
+            key=lambda p: int(p.name),
+        )
+        for old in stamps[:-keep] if keep else stamps:
+            shutil.rmtree(old, ignore_errors=True)
 
     def recover(self):
         prefix = self.read_json("latest-backup.bin")["prefix"]

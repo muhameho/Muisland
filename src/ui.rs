@@ -205,6 +205,13 @@ pub enum Icon {
     Check,
     Expand,
     Tray,
+    Power,
+    Chevron,
+    Copy,
+    Palette,
+    Island,
+    Bell,
+    Shield,
 }
 /// Line icons on a 20-unit grid centred at (cx, cy).
 fn icon(c: &C, kind: Icon, cx: f32, cy: f32, size: f32, col: Color, spin: f32) {
@@ -287,6 +294,48 @@ fn icon(c: &C, kind: Icon, cx: f32, cy: f32, size: f32, col: Color, spin: f32) {
         }
         Icon::Check => c.polyline(&[p(-6., 0.), p(-2., 4.5), p(6.5, -5.)], w * 1.1, col, false),
         Icon::Expand => c.polyline(&[p(-5., -2.5), p(0., 2.5), p(5., -2.5)], w, col, false),
+        Icon::Power => {
+            c.arc(cx, cy + 0.8 * k, 6.6 * k, w, 0.11 * TAU, 0.78 * TAU, col);
+            c.line(p(0., -8.).0, p(0., -8.).1, p(0., -0.5).0, p(0., -0.5).1, w, col);
+        }
+        Icon::Copy => {
+            c.stroke(r(cx - 6. * k, cy - 3.5 * k, 9.5 * k, 11. * k), 2.2 * k, w, col);
+            c.polyline(
+                &[p(-2.5, -4.), p(-2.5, -7.5), p(6.5, -7.5), p(6.5, 3.5), p(3.5, 3.5)],
+                w,
+                col,
+                false,
+            );
+        }
+        Icon::Chevron => c.polyline(&[p(-2.5, -6.), p(3.5, 0.), p(-2.5, 6.)], w, col, false),
+        Icon::Palette => {
+            c.ring(cx, cy, 7.5 * k, w, col);
+            c.circle(cx - 3. * k, cy - 2.6 * k, 1.4 * k, col);
+            c.circle(cx + 1.8 * k, cy - 3.6 * k, 1.4 * k, col);
+            c.circle(cx + 4. * k, cy + 0.8 * k, 1.4 * k, col);
+            c.circle(cx - 1.6 * k, cy + 3.4 * k, 1.9 * k, col);
+        }
+        Icon::Island => {
+            c.ring(cx, cy, 7.5 * k, w, col.alpha(0.35));
+            c.arc(cx, cy, 7.5 * k, w * 1.15, 0., 0.68 * TAU, col);
+            c.circle(cx, cy, 2.4 * k, col);
+        }
+        Icon::Bell => {
+            c.arc(cx, cy - 1. * k, 5.6 * k, w, -0.25 * TAU, 0.5 * TAU, col);
+            c.line(p(-5.6, -1.).0, p(-5.6, -1.).1, p(-5.6, 4.).0, p(-5.6, 4.).1, w, col);
+            c.line(p(5.6, -1.).0, p(5.6, -1.).1, p(5.6, 4.).0, p(5.6, 4.).1, w, col);
+            c.line(p(-7.6, 4.).0, p(-7.6, 4.).1, p(7.6, 4.).0, p(7.6, 4.).1, w, col);
+            c.line(p(-1.8, 7.).0, p(-1.8, 7.).1, p(1.8, 7.).0, p(1.8, 7.).1, w, col);
+        }
+        Icon::Shield => {
+            c.polyline(
+                &[p(0., -8.), p(6.5, -5.5), p(6.5, 0.5), p(0., 7.8), p(-6.5, 0.5), p(-6.5, -5.5)],
+                w,
+                col,
+                true,
+            );
+            c.polyline(&[p(-2.8, 0.), p(-0.6, 2.4), p(3.2, -2.2)], w, col, false);
+        }
         // Minimize: a single bar, as in a window title bar.
         Icon::Tray => c.line(p(-5.5, 1.).0, p(-5.5, 1.).1, p(5.5, 1.).0, p(5.5, 1.).1, w * 1.1, col),
     }
@@ -348,7 +397,11 @@ fn button(
             t.text
         }
         Style::Ghost => {
-            c.fill(b, radius, t.raised.alpha(h));
+            // Sits on cards that brighten on hover too, so lift it a step
+            // further and grow it slightly.
+            let lift = if t.dark { 0.09 } else { 0.05 };
+            let g = b.inset(-1.5 * h);
+            c.fill(g, radius + 1.5 * h, t.raised.mix(t.text, lift).alpha(h));
             t.text.mix(t.muted, 0.35 * (1. - h))
         }
         Style::Danger => {
@@ -914,7 +967,7 @@ fn draw_panel(c: &mut C, s: &State, m: &mut Mem) {
         t.muted,
         Align::Start,
     );
-    let in_prefs = matches!(s.view, View::Preferences);
+    let in_prefs = matches!(s.view, View::Preferences | View::Section(_));
     let spin = m.ease(
         6,
         Action::Preferences,
@@ -1078,6 +1131,7 @@ fn draw_view(c: &mut C, s: &State, m: &mut Mem, view: &View) {
         View::Home => home(c, s, m),
         View::Details(i) => details(c, s, m, *i, view == &s.view),
         View::Preferences => preferences(c, s, m),
+        View::Section(i) => settings_section(c, s, m, *i),
         View::Notice(title, body) => {
             let t = s.theme();
             let tone = if s.error && view == &s.view {
@@ -1114,6 +1168,7 @@ fn draw_view(c: &mut C, s: &State, m: &mut Mem, view: &View) {
                 body,
                 Some(*i),
             );
+            handoff_box(c, s, m);
             confirm_buttons(c, s, m, s.tr("Confirm switch"), Action::Confirm, false);
         }
         View::Confirm(op) => {
@@ -1153,7 +1208,23 @@ fn draw_view(c: &mut C, s: &State, m: &mut Mem, view: &View) {
             } else {
                 "Close & switch"
             });
+            if matches!(op, app::Op::Switch(_)) {
+                handoff_box(c, s, m);
+            }
             confirm_buttons(c, s, m, label, Action::Confirm, false);
+        }
+        View::QuitConfirm => {
+            dialog(
+                c,
+                s,
+                m,
+                Icon::Power,
+                s.theme().danger,
+                s.tr("Quit Muisland?"),
+                s.tr("The floating island and tray icon will close and usage stops updating. Your saved accounts stay on this computer."),
+                None,
+            );
+            confirm_buttons(c, s, m, s.tr("Quit"), Action::QuitNow, true);
         }
         View::Remove(i, name) => {
             let body = s
@@ -1234,6 +1305,48 @@ fn draw_view(c: &mut C, s: &State, m: &mut Mem, view: &View) {
             confirm_buttons(c, s, m, s.tr("Switch now"), Action::Confirm, false);
         }
     }
+}
+/// "Moving a Cowork task?" — sits above the switch buttons for Claude.
+fn handoff_box(c: &mut C, s: &State, m: &mut Mem) {
+    if s.settings.provider != 0 {
+        return;
+    }
+    let t = s.theme();
+    let b = r(PAD, CB - 48. - 14. - 122., PW - 2. * PAD, 122.);
+    c.fill(b, 16., t.accent.alpha(0.07));
+    c.stroke(b, 16., 1., t.accent.alpha(0.25));
+    icon(c, Icon::Copy, b.x + 22., b.y + 22., 16., t.accent, 0.);
+    c.text(
+        s.tr("Moving a Cowork task?"),
+        r(b.x + 40., b.y + 11., b.w - 52., 22.),
+        font(13.5, 650),
+        t.text,
+        Align::Start,
+    );
+    c.paragraph(
+        s.tr(if s.handoff_copied {
+            "Sent it in Cowork? When HANDOFF.md is saved, switch. Afterwards Muisland gives you the request to continue."
+        } else {
+            "Before switching, copy this request and send it in Cowork. It saves a HANDOFF.md summary in your folder."
+        }),
+        r(b.x + 14., b.y + 36., b.w - 28., 40.),
+        font(11.5, 400),
+        t.muted,
+    );
+    button(
+        c,
+        s,
+        m,
+        r(b.x + 12., b.bottom() - 42., b.w - 24., 32.),
+        Action::CopyHandoff,
+        s.tr(if s.handoff_copied {
+            "Copy request again"
+        } else {
+            "Copy handoff request"
+        }),
+        Style::Secondary,
+        Some(Icon::Copy),
+    );
 }
 fn confirm_buttons(c: &mut C, s: &State, m: &mut Mem, label: &str, a: Action, danger: bool) {
     let y = CB - 48.;
@@ -1362,7 +1475,48 @@ fn home(c: &mut C, s: &State, m: &mut Mem) {
         Style::Secondary,
         Some(Icon::Plus),
     );
-    let top = CT + 44.;
+    let mut top = CT + 44.;
+    if s.handoff_ready && s.settings.provider == 0 {
+        let b = r(PAD, top, PW - 2. * PAD, 104.);
+        c.fill(b, 16., t.accent.alpha(0.09));
+        c.stroke(b, 16., 1., t.accent.alpha(0.3));
+        icon(c, Icon::Copy, b.x + 22., b.y + 22., 16., t.accent, 0.);
+        c.text(
+            s.tr("Continue your Cowork task"),
+            r(b.x + 40., b.y + 11., b.w - 80., 22.),
+            font(13.5, 650),
+            t.text,
+            Align::Start,
+        );
+        icon_button(
+            c,
+            s,
+            m,
+            r(b.right() - 40., b.y + 6., 32., 32.),
+            Action::DismissHandoff,
+            Icon::Close,
+            0.,
+            0.,
+        );
+        c.text(
+            s.tr("Open Cowork on the same folder, then paste this request."),
+            r(b.x + 14., b.y + 36., b.w - 28., 20.),
+            font(11.5, 400),
+            t.muted,
+            Align::Start,
+        );
+        button(
+            c,
+            s,
+            m,
+            r(b.x + 12., b.bottom() - 42., b.w - 24., 32.),
+            Action::CopyContinue,
+            s.tr("Copy continue request"),
+            Style::Primary,
+            Some(Icon::Copy),
+        );
+        top += b.h + 10.;
+    }
     let region = r(0., top, PW, CB - top);
     let n = s.settings.accounts.len();
     if n == 0 {
@@ -1402,12 +1556,14 @@ fn home(c: &mut C, s: &State, m: &mut Mem) {
     } else {
         None
     };
-    let content = n as f32 * (CARD_H + CARD_GAP) + if note.is_some() { 40. } else { 0. };
+    // Room above the first card so its hover lift and border stay inside the clip.
+    let inset = 4.;
+    let content = inset + n as f32 * (CARD_H + CARD_GAP) + if note.is_some() { 40. } else { 0. };
     m.finish_scroll(0, content - region.h);
     let scroll = m.step_scroll(0);
     // Keyboard focus keeps rows in view.
     m.rows[0] = (0..n)
-        .map(|i| (Action::Switch(i), i as f32 * (CARD_H + CARD_GAP), CARD_H))
+        .map(|i| (Action::Switch(i), inset + i as f32 * (CARD_H + CARD_GAP), CARD_H))
         .collect();
     reveal(m, 0, region.h);
     let clip = c.map(region);
@@ -1415,14 +1571,14 @@ fn home(c: &mut C, s: &State, m: &mut Mem) {
     let old_clip = c.hit_clip;
     c.hit_clip = Some(old_clip.map(|o| o.intersect(&clip)).unwrap_or(clip));
     for i in 0..n {
-        let y = top + i as f32 * (CARD_H + CARD_GAP) - scroll;
+        let y = top + inset + i as f32 * (CARD_H + CARD_GAP) - scroll;
         if y + CARD_H < top - 2. || y > region.bottom() + 2. {
             continue;
         }
         account_card(c, s, m, i, r(PAD, y, PW - 2. * PAD, CARD_H));
     }
     if let Some(note) = note {
-        let y = top + n as f32 * (CARD_H + CARD_GAP) - scroll;
+        let y = top + inset + n as f32 * (CARD_H + CARD_GAP) - scroll;
         c.text(
             note,
             r(PAD + 4., y, PW - 2. * PAD - 8., 30.),
@@ -1810,9 +1966,16 @@ fn section(c: &C, s: &State, y: f32, label: &str) -> f32 {
     );
     y + 26.
 }
-fn preferences(c: &mut C, s: &State, m: &mut Mem) {
-    let t = s.theme();
-    view_title(c, s, m, s.tr("Settings"));
+type Rows = Vec<(Action, f32, f32)>;
+/// Settings pages share one scrolling region (scroll slot 1) under a title.
+fn settings_scroll(
+    c: &mut C,
+    s: &State,
+    m: &mut Mem,
+    title: &str,
+    body: impl FnOnce(&mut C, &State, &mut Mem, f32, &mut Rows) -> f32,
+) {
+    view_title(c, s, m, title);
     let top = CT + 44.;
     let region = r(0., top, PW, CB - top);
     let scroll = m.step_scroll(1);
@@ -1821,14 +1984,192 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
     let old_clip = c.hit_clip;
     c.hit_clip = Some(old_clip.map(|o| o.intersect(&clip)).unwrap_or(clip));
     let start = top - scroll;
-    let mut y = start + 4.;
-    let mut rows: Vec<(Action, f32, f32)> = Vec::new();
-    let row = |a: Action, y: f32, h: f32, rows: &mut Vec<(Action, f32, f32)>| {
-        rows.push((a, y - start, h))
-    };
-
-    // Appearance
-    y = section(c, s, y, s.tr("APPEARANCE"));
+    let mut rows: Rows = Vec::new();
+    let end = body(c, s, m, start, &mut rows);
+    m.finish_scroll(1, end - start - region.h);
+    m.rows[1] = rows;
+    reveal(m, 1, region.h);
+    edge_fades(c, s, region, scroll, m.scroll_max[1]);
+    c.hit_clip = old_clip;
+    c.pop_clip();
+}
+pub const CATEGORIES: usize = 5;
+fn category_title(s: &State, i: u8) -> &'static str {
+    s.tr(match i {
+        0 => "Appearance & language",
+        1 => "Floating island",
+        2 => "Alerts & auto-switch",
+        3 => "General",
+        _ => "Backup & recovery",
+    })
+}
+fn theme_name(s: &State, i: usize) -> &'static str {
+    if i == theme::AUTO {
+        s.tr("Match Windows")
+    } else if s.rtl() {
+        theme::THEMES[i].arabic
+    } else {
+        theme::THEMES[i].name
+    }
+}
+/// One line under each category: what is currently set there.
+fn category_summary(s: &State, i: u8) -> String {
+    let st = &s.settings;
+    let pct = |v: f32| format!("{}%", (v * 100.).round() as i32);
+    match i {
+        0 => format!(
+            "{} · {}",
+            theme_name(s, st.theme),
+            if st.language == 1 { "العربية" } else { "English" }
+        ),
+        1 => {
+            let mut parts = vec![s.tr(if st.circle { "Circle" } else { "Pill" }).to_string()];
+            parts.push(if st.circle_numbers {
+                match st.circle_metric {
+                    0 => s.session_label().to_string(),
+                    1 => s.weekly_label().to_string(),
+                    _ => s.tr("Highest").to_string(),
+                }
+            } else {
+                s.tr("Logo").to_string()
+            });
+            if !st.show_island {
+                parts.push(s.tr("Hidden").to_string());
+            }
+            parts.join(" · ")
+        }
+        2 => {
+            let mut parts = Vec::new();
+            if st.usage_alerts {
+                parts.push(format!("{} {}", s.session_label(), pct(st.session_threshold)));
+                parts.push(format!("{} {}", s.weekly_label(), pct(st.weekly_threshold)));
+            }
+            if st.auto_switch {
+                parts.push(s.tr("Auto-switch on").to_string());
+            }
+            if parts.is_empty() {
+                s.tr("Off").to_string()
+            } else {
+                parts.join(" · ")
+            }
+        }
+        3 => {
+            let mut parts = Vec::new();
+            if s.launch_at_login {
+                parts.push(s.tr("Starts with Windows").to_string());
+            }
+            if st.tray {
+                parts.push(s.tr("Tray icon").to_string());
+            }
+            if st.hotkey {
+                parts.push("Ctrl+Alt+M".to_string());
+            }
+            if st.reduced_motion {
+                parts.push(s.tr("No animations").to_string());
+            }
+            if parts.is_empty() {
+                s.tr("Off").to_string()
+            } else {
+                parts.join(" · ")
+            }
+        }
+        _ => {
+            if st.provider == 1 {
+                s.tr("Undo the last account switch").to_string()
+            } else if st.protect_local {
+                match s.backup.as_ref().and_then(|b| b.latest) {
+                    Some(t) => format!(
+                        "{} · {}",
+                        s.tr("Backup before switching: on"),
+                        s.tr("last {age}")
+                            .replace("{age}", &age(s, accounts::now().saturating_sub(t)))
+                    ),
+                    None => s.tr("Backup before switching: on").to_string(),
+                }
+            } else {
+                s.tr("Backup before switching: off").to_string()
+            }
+        }
+    }
+}
+fn preferences(c: &mut C, s: &State, m: &mut Mem) {
+    settings_scroll(c, s, m, s.tr("Settings"), |c, s, m, start, rows| {
+        let t = s.theme();
+        let mut y = start + 4.;
+        for i in 0..CATEGORIES as u8 {
+            let a = Action::Category(i);
+            let b = r(PAD, y, PW - 2. * PAD, 54.);
+            let h = m.hover(s, a);
+            let down = pressed(s, a);
+            let b2 = if down { b.inset(0.8) } else { b };
+            c.fill(b2, 16., surface_hover(t, h));
+            c.stroke(b2, 16., 1., t.line.alpha(0.45 * (1. - h)));
+            let ix = b.x + 31.;
+            c.circle(ix, b.cy(), 17., t.accent.alpha(0.13 + 0.05 * h));
+            let ic = match i {
+                0 => Icon::Palette,
+                1 => Icon::Island,
+                2 => Icon::Bell,
+                3 => Icon::Gear,
+                _ => Icon::Shield,
+            };
+            icon(c, ic, ix, b.cy(), 18., t.accent, 0.);
+            let tx = b.x + 60.;
+            let tw = b.w - 60. - 40.;
+            c.text(category_title(s, i), r(tx, b.y + 8., tw, 20.), font(14., 650), t.text, Align::Start);
+            c.text(
+                &category_summary(s, i),
+                r(tx, b.y + 28., tw, 18.),
+                font(11.5, 450),
+                t.muted,
+                Align::Start,
+            );
+            icon(
+                c,
+                Icon::Chevron,
+                b.right() - 20. + 3. * h,
+                b.cy(),
+                16.,
+                t.muted.mix(t.text, h),
+                0.,
+            );
+            focus_ring(c, s, b, 16., a);
+            c.hit(b, a);
+            rows.push((a, y - start, 54.));
+            y += 60.;
+        }
+        y += 4.;
+        button(
+            c,
+            s,
+            m,
+            r(PAD, y, PW - 2. * PAD, 42.),
+            Action::Quit,
+            s.tr("Quit Muisland"),
+            Style::Danger,
+            Some(Icon::Power),
+        );
+        rows.push((Action::Quit, y - start, 42.));
+        y + 52.
+    });
+}
+pub fn settings_section(c: &mut C, s: &State, m: &mut Mem, i: u8) {
+    settings_scroll(c, s, m, category_title(s, i), |c, s, m, start, rows| {
+        let y = start + 4.;
+        let row = |a: Action, y: f32, h: f32, rows: &mut Rows| rows.push((a, y - start, h));
+        match i {
+            0 => appearance_page(c, s, m, y, rows, &row),
+            1 => island_page(c, s, m, y, rows, &row),
+            2 => alerts_page(c, s, m, y, rows, &row),
+            3 => general_page(c, s, m, y, rows, &row),
+            _ => backup_page(c, s, m, y, rows, &row),
+        }
+    });
+}
+type RowFn<'a> = dyn Fn(Action, f32, f32, &mut Rows) + 'a;
+fn appearance_page(c: &mut C, s: &State, m: &mut Mem, mut y: f32, rows: &mut Rows, row: &RowFn) -> f32 {
+    let t = s.theme();
+    y = section(c, s, y, s.tr("THEME"));
     let cols = 3.;
     let gap = 10.;
     let cw = (PW - 2. * PAD - gap * (cols - 1.)) / cols;
@@ -1837,7 +2178,7 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
         let rowi = (i / 3) as f32;
         let cell = r(PAD + col * (cw + gap), y + rowi * (74. + gap), cw, 74.);
         let a = Action::Theme(i);
-        row(a, cell.y, cell.h, &mut rows);
+        row(a, cell.y, cell.h, rows);
         let h = m.hover(s, a);
         let selected = s.settings.theme == i;
         let sel = m.ease(8, a, if selected { 1. } else { 0. }, 14., None);
@@ -1870,15 +2211,8 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
         } else {
             draw_preview(c, &theme::THEMES[i], preview);
         }
-        let name = if i == theme::AUTO {
-            s.tr("Match Windows")
-        } else if s.rtl() {
-            theme::THEMES[i].arabic
-        } else {
-            theme::THEMES[i].name
-        };
         c.text(
-            name,
+            theme_name(s, i),
             r(cell.x + 6., cell.y + 48., cell.w - 12., 20.),
             font(11.5, 600),
             t.text.mix(t.muted, 0.3 * (1. - sel)),
@@ -1888,77 +2222,6 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
         c.hit(cell, a);
     }
     y += (theme::COUNT as f32 / cols).ceil() * (74. + gap) + 12.;
-
-    // Floating island
-    y = section(c, s, y, s.tr("FLOATING ISLAND"));
-    let seg_x = PAD + 132.;
-    let seg_w = PW - PAD - seg_x;
-    let label_row = |c: &C, y: f32, label: &str| {
-        c.text(
-            label,
-            r(PAD, y, 128., 36.),
-            font(13., 550),
-            t.text,
-            Align::Start,
-        );
-    };
-    label_row(c, y, s.tr("Style"));
-    segmented(
-        c,
-        s,
-        m,
-        r(seg_x, y, seg_w, 36.),
-        &[
-            (s.tr("Circle"), Action::Style(true)),
-            (s.tr("Pill"), Action::Style(false)),
-        ],
-        if s.settings.circle { 0 } else { 1 },
-        Action::Style(true),
-    );
-    row(Action::Style(true), y, 36., &mut rows);
-    y += 46.;
-    label_row(c, y, s.tr("Center shows"));
-    segmented(
-        c,
-        s,
-        m,
-        r(seg_x, y, seg_w, 36.),
-        &[
-            (s.tr("Percentage"), Action::Center(true)),
-            (s.tr("Logo"), Action::Center(false)),
-        ],
-        if s.settings.circle_numbers { 0 } else { 1 },
-        Action::Center(true),
-    );
-    row(Action::Center(true), y, 36., &mut rows);
-    y += 46.;
-    label_row(c, y, s.tr("Percentage of"));
-    segmented(
-        c,
-        s,
-        m,
-        r(seg_x, y, seg_w, 36.),
-        &[
-            (s.session_label(), Action::Metric(0)),
-            (s.weekly_label(), Action::Metric(1)),
-            (s.tr("Highest"), Action::Metric(2)),
-        ],
-        s.settings.circle_metric,
-        Action::Metric(0),
-    );
-    row(Action::Metric(0), y, 36., &mut rows);
-    y += 50.;
-    for (a, label) in [
-        (Action::FloatSlider, s.tr("Island size")),
-        (Action::BubbleSlider, s.tr("Hover card size")),
-        (Action::MenuSlider, s.tr("Menu size")),
-    ] {
-        row(a, y, 36., &mut rows);
-        y += slider_row(c, s, m, y, a, label) + 6.;
-    }
-    y += 12.;
-
-    // Language
     y = section(c, s, y, s.tr("LANGUAGE"));
     segmented(
         c,
@@ -1972,18 +2235,138 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
         s.settings.language,
         Action::Language(0),
     );
-    row(Action::Language(0), y, 38., &mut rows);
+    row(Action::Language(0), y, 38., rows);
+    y + 58.
+}
+fn island_page(c: &mut C, s: &State, m: &mut Mem, mut y: f32, rows: &mut Rows, row: &RowFn) -> f32 {
+    let t = s.theme();
+    let seg_x = PAD + 132.;
+    let seg_w = PW - PAD - seg_x;
+    let label_row = |c: &C, y: f32, label: &str| {
+        c.text(label, r(PAD, y, 128., 36.), font(13., 550), t.text, Align::Start);
+    };
+    let h = toggle_row(
+        c,
+        s,
+        m,
+        y,
+        Action::ShowIsland,
+        s.tr("Show floating island"),
+        Some(s.tr("When off, Muisland stays in the tray")),
+        s.settings.show_island,
+    );
+    row(Action::ShowIsland, y, h, rows);
+    y += h + 18.;
+    y = section(c, s, y, s.tr("LOOK"));
+    label_row(c, y, s.tr("Style"));
+    segmented(
+        c,
+        s,
+        m,
+        r(seg_x, y, seg_w, 36.),
+        &[
+            (s.tr("Circle"), Action::Style(true)),
+            (s.tr("Pill"), Action::Style(false)),
+        ],
+        if s.settings.circle { 0 } else { 1 },
+        Action::Style(true),
+    );
+    row(Action::Style(true), y, 36., rows);
+    y += 46.;
+    label_row(c, y, s.tr("Inside the circle"));
+    segmented(
+        c,
+        s,
+        m,
+        r(seg_x, y, seg_w, 36.),
+        &[
+            (s.tr("Percentage"), Action::Center(true)),
+            (s.tr("Logo"), Action::Center(false)),
+        ],
+        if s.settings.circle_numbers { 0 } else { 1 },
+        Action::Center(true),
+    );
+    row(Action::Center(true), y, 36., rows);
+    y += 46.;
+    label_row(c, y, s.tr("Show usage for"));
+    segmented(
+        c,
+        s,
+        m,
+        r(seg_x, y, seg_w, 36.),
+        &[
+            (s.session_label(), Action::Metric(0)),
+            (s.weekly_label(), Action::Metric(1)),
+            (s.tr("Highest"), Action::Metric(2)),
+        ],
+        s.settings.circle_metric,
+        Action::Metric(0),
+    );
+    row(Action::Metric(0), y, 36., rows);
     y += 56.;
-
-    // Behaviour
-    y = section(c, s, y, s.tr("BEHAVIOR"));
-    let toggles: Vec<(Action, &str, Option<&str>, bool)> = vec![
+    y = section(c, s, y, s.tr("SIZE"));
+    for (a, label) in [
+        (Action::FloatSlider, s.tr("Island size")),
+        (Action::BubbleSlider, s.tr("Hover card size")),
+        (Action::MenuSlider, s.tr("Panel size")),
+    ] {
+        row(a, y, 36., rows);
+        y += slider_row(c, s, m, y, a, label) + 6.;
+    }
+    y + 12.
+}
+fn alerts_page(c: &mut C, s: &State, m: &mut Mem, mut y: f32, rows: &mut Rows, row: &RowFn) -> f32 {
+    let t = s.theme();
+    let h = toggle_row(
+        c,
+        s,
+        m,
+        y,
+        Action::UsageAlerts,
+        s.tr("Usage alerts"),
+        Some(s.tr("Notify when an account reaches the limits below")),
+        s.settings.usage_alerts,
+    );
+    row(Action::UsageAlerts, y, h, rows);
+    y += h + 10.;
+    let session = s.tr("{label} alert at").replace("{label}", s.session_label());
+    let weekly = s.tr("{label} alert at").replace("{label}", s.weekly_label());
+    for (a, label) in [
+        (Action::SessionThreshold, session.as_str()),
+        (Action::WeeklyThreshold, weekly.as_str()),
+    ] {
+        row(a, y, 36., rows);
+        y += slider_row(c, s, m, y, a, label) + 6.;
+    }
+    y += 10.;
+    for (a, label, cap, on) in [
         (
-            Action::Motion,
-            s.tr("Reduce motion"),
-            None,
-            s.settings.reduced_motion,
+            Action::AutoSwitch,
+            s.tr("Switch accounts automatically"),
+            Some(s.tr("Moves to the saved account with the most room")),
+            s.settings.auto_switch,
         ),
+        (
+            Action::PauseForWork,
+            s.tr("Ask before switching if Claude may be busy"),
+            None,
+            s.settings.pause_for_work,
+        ),
+    ] {
+        let h = toggle_row(c, s, m, y, a, label, cap, on);
+        row(a, y, h, rows);
+        y += h + 8.;
+    }
+    y += 2. + c.paragraph(
+        s.tr("Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed."),
+        r(PAD + 2., y, PW - 2. * PAD - 4., 80.),
+        font(11.5, 400),
+        t.muted,
+    );
+    y + 20.
+}
+fn general_page(c: &mut C, s: &State, m: &mut Mem, mut y: f32, rows: &mut Rows, row: &RowFn) -> f32 {
+    let toggles: Vec<(Action, &str, Option<&str>, bool)> = vec![
         (
             Action::LaunchAtLogin,
             s.tr("Start with Windows"),
@@ -1991,14 +2374,8 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
             s.launch_at_login,
         ),
         (
-            Action::ShowIsland,
-            s.tr("Show floating island"),
-            Some(s.tr("When off, Muisland stays in the tray")),
-            s.settings.show_island,
-        ),
-        (
             Action::TrayIcon,
-            s.tr("Tray icon"),
+            s.tr("Show tray icon"),
             Some(s.tr("Live usage ring in the notification area")),
             s.settings.tray,
         ),
@@ -2008,121 +2385,104 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
             Some(s.tr("Ctrl + Alt + M opens Muisland")),
             s.settings.hotkey,
         ),
+        (
+            Action::Motion,
+            s.tr("Remove animations"),
+            Some(s.tr("Changes appear instantly")),
+            s.settings.reduced_motion,
+        ),
     ];
     for (a, label, cap, on) in toggles {
         let h = toggle_row(c, s, m, y, a, label, cap, on);
-        row(a, y, h, &mut rows);
+        row(a, y, h, rows);
         y += h + 8.;
     }
-    y += 12.;
-
-    // Alerts
-    y = section(c, s, y, s.tr("ALERTS & AUTO-SWITCH"));
-    let h = toggle_row(
-        c,
-        s,
-        m,
-        y,
-        Action::UsageAlerts,
-        s.tr("Notify at usage thresholds"),
-        None,
-        s.settings.usage_alerts,
-    );
-    row(Action::UsageAlerts, y, h, &mut rows);
-    y += h + 10.;
-    for (a, label) in [
-        (Action::SessionThreshold, s.tr("Session limit")),
-        (Action::WeeklyThreshold, s.tr("Weekly limit")),
-    ] {
-        row(a, y, 36., &mut rows);
-        y += slider_row(c, s, m, y, a, label) + 6.;
-    }
-    y += 6.;
-    for (a, label, on) in [
-        (
-            Action::AutoSwitch,
-            s.tr("Auto-switch at these limits"),
-            s.settings.auto_switch,
-        ),
-        (
-            Action::PauseForWork,
-            s.tr("Ask first when work may be open"),
-            s.settings.pause_for_work,
-        ),
-    ] {
-        let h = toggle_row(c, s, m, y, a, label, None, on);
-        row(a, y, h, &mut rows);
-        y += h + 8.;
-    }
-    y += 2. + c.paragraph(
-        s.tr("Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed."),
-        r(PAD + 2., y, PW - 2. * PAD - 4., 80.),
-        font(11.5, 400),
-        t.muted,
-    );
-    y += 20.;
-
-    // Safety
-    y = section(c, s, y, s.tr("SAFETY & RECOVERY"));
+    y + 12.
+}
+fn backup_page(c: &mut C, s: &State, m: &mut Mem, mut y: f32, rows: &mut Rows, row: &RowFn) -> f32 {
+    let t = s.theme();
     if s.settings.provider == 0 {
+        y = section(c, s, y, s.tr("SESSIONS"));
+        let h = toggle_row(
+            c,
+            s,
+            m,
+            y,
+            Action::ShareSessions,
+            s.tr("Show Code sessions in every account"),
+            Some(s.tr("Copies the Code tab's sessions when you switch")),
+            s.settings.share_sessions,
+        );
+        row(Action::ShareSessions, y, h, rows);
+        y += h + 18.;
+        y = section(c, s, y, s.tr("LOCAL DATA"));
         let h = toggle_row(
             c,
             s,
             m,
             y,
             Action::Protect,
-            s.tr("Back up local data before switch"),
-            Some(s.tr("Encrypted checkpoint while Claude is closed")),
+            s.tr("Back up Claude's data before switching"),
+            Some(s.tr("Encrypted chats, sessions and settings; caches skipped")),
             s.settings.protect_local,
         );
-        row(Action::Protect, y, h, &mut rows);
+        row(Action::Protect, y, h, rows);
         y += h + 10.;
+        let status = match s.backup.as_ref() {
+            Some(b) if b.count > 0 => s
+                .tr("{n} backups · {size} · latest {age}")
+                .replace("{n}", &b.count.to_string())
+                .replace("{size}", &format!("{:.1} MB", b.bytes as f64 / 1e6))
+                .replace(
+                    "{age}",
+                    &age(s, accounts::now().saturating_sub(b.latest.unwrap_or(0))),
+                ),
+            _ => s.tr("No backups yet.").to_string(),
+        };
+        let note = format!(
+            "{} {}",
+            status,
+            s.tr("The latest {n} are kept; older ones are deleted automatically.")
+                .replace("{n}", &crate::backup::KEEP.to_string())
+        );
+        y += 4. + c.paragraph(&note, r(PAD + 2., y, PW - 2. * PAD - 4., 60.), font(11.5, 400), t.muted);
+        y += 14.;
+        for (a, label) in [
+            (Action::Recover, s.tr("Restore latest backup to a folder")),
+            (Action::OpenBackups, s.tr("Open backups folder")),
+        ] {
+            button(c, s, m, r(PAD, y, PW - 2. * PAD, 42.), a, label, Style::Secondary, None);
+            row(a, y, 42., rows);
+            y += 50.;
+        }
+        y += 12.;
+    } else {
+        y += c.paragraph(
+            s.tr("Local data backup is for Claude. Open the Claude tab to change it."),
+            r(PAD + 2., y, PW - 2. * PAD - 4., 60.),
+            font(11.5, 400),
+            t.muted,
+        ) + 16.;
     }
+    y = section(c, s, y, s.tr("SIGN-IN"));
     button(
         c,
         s,
         m,
         r(PAD, y, PW - 2. * PAD, 42.),
         Action::Rollback,
-        s.tr("Restore previous sign-in"),
+        s.tr("Undo last account switch"),
         Style::Secondary,
         None,
     );
-    row(Action::Rollback, y, 42., &mut rows);
+    row(Action::Rollback, y, 42., rows);
     y += 50.;
-    if s.settings.provider == 0 {
-        button(
-            c,
-            s,
-            m,
-            r(PAD, y, PW - 2. * PAD, 42.),
-            Action::Recover,
-            s.tr("Recover local backup to folder"),
-            Style::Secondary,
-            None,
-        );
-        row(Action::Recover, y, 42., &mut rows);
-        y += 50.;
-    }
-    y += 8.;
-    button(
-        c,
-        s,
-        m,
-        r(PAD, y, PW - 2. * PAD, 42.),
-        Action::Quit,
-        s.tr("Quit Muisland"),
-        Style::Danger,
-        None,
-    );
-    row(Action::Quit, y, 42., &mut rows);
-    y += 52.;
-    m.finish_scroll(1, y - start - region.h);
-    m.rows[1] = rows;
-    reveal(m, 1, region.h);
-    edge_fades(c, s, region, scroll, m.scroll_max[1]);
-    c.hit_clip = old_clip;
-    c.pop_clip();
+    y + 2. + c.paragraph(
+        s.tr("Puts back the sign-in that was active before the last switch."),
+        r(PAD + 2., y, PW - 2. * PAD - 4., 40.),
+        font(11.5, 400),
+        t.muted,
+    ) + 12.
 }
 
 // ------------------------------------------------------------- hover card

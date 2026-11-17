@@ -100,12 +100,12 @@ Start-Process .\demo\index.html
 - **Automatic usage** — view the 5-hour and weekly quotas, percentage used, and reset countdowns.
 - **Circle by default** — a draggable circle showing the live percentage inside session and weekly rings; choose the 5-hour, weekly or highest value, or show the logo instead. A pill is also available. A separate hover card picks the free side of the screen.
 - **Independent sizes** — adjust the panel, floating island, and hover card separately.
-- **Smooth, sharp rendering** — Direct2D/DirectWrite with anti-aliasing, real transparency and per-monitor DPI; spring animations are paced to the display's refresh rate. Reduce motion makes them immediate.
+- **Smooth, sharp rendering** — Direct2D/DirectWrite with anti-aliasing, real transparency and per-monitor DPI; spring animations are paced to the display's refresh rate. *Remove animations* (Settings → General) makes every change instant.
 - **Tray icon and shortcut** — a live usage ring in the notification area (left-click opens, right-click for a menu), Windows notifications for usage alerts while the panel is closed, and **Ctrl+Alt+M** to open from anywhere. You can hide the floating island and keep only the tray icon.
 - **Start with Windows** — optional, from Settings.
 - **Screen-aware positioning** — the island stays within the monitor's usable area; closing the menu restores the floating position.
 - **In-island controls** — settings, confirmations, and errors appear inside Muisland. Click outside or on the open header to collapse it.
-- **Optional local backups** — create an encrypted checkpoint before switching and recover it to a separate folder.
+- **Optional local backups** — an encrypted copy of Claude's local data (sessions, settings, storage; caches and downloads skipped) before each switch, in well under a second for typical data. The latest three are kept, and the newest restores to a separate folder.
 
 ## Build and run
 
@@ -193,11 +193,21 @@ After you confirm, Muisland asks Claude to close normally and waits for it to fi
 
 ## Appearance
 
-Open the header **gear icon** for Settings. Choose a theme (or *Match Windows*), the island style (circle or pill), what the circle shows (percentage or logo, and which usage window), and the language. Three sizes are independent:
+Open the header **gear icon** for Settings. It lists five categories, each showing its current values:
+
+| Category | Contains |
+| --- | --- |
+| Appearance & language | Theme (or *Match Windows*) and language |
+| Floating island | Show or hide the island, circle or pill, what is inside the circle (percentage or logo) and which usage it shows, and the three sizes |
+| Alerts & auto-switch | Usage alerts and their limits, automatic switching, and asking first when Claude may be busy |
+| General | Start with Windows, tray icon, Ctrl+Alt+M, and *Remove animations* |
+| Backup & recovery | Back up Claude's data before switching, restore the latest backup to a folder, open the backups folder, and undo the last account switch |
+
+**Quit Muisland** is at the bottom of the list and asks for confirmation. Three sizes are independent:
 
 | Setting | Range | Controls |
 | --- | --- | --- |
-| Menu size | 75–160% | The expanded panel |
+| Panel size | 75–160% | The expanded panel |
 | Island size | 60–180% | The collapsed circle or pill |
 | Hover card size | 85–160% | The separate account and usage card |
 
@@ -218,6 +228,7 @@ Sizes are relative to the monitor's scaling, so the island looks the same on 100
 | Tab / Shift+Tab, Enter or Space | Moves keyboard focus and activates it |
 | Click an account card | Opens switch confirmation, or reports that it is already logged in |
 | Click an account's **⋯** button | Renames or removes the account |
+| **Moving a Cowork task?** box in the Claude switch dialog | Copies a request for Cowork to write `HANDOFF.md` (goal, what is done, what is left, decisions) in your working folder. After the switch, a banner on Accounts copies the request that continues from `HANDOFF.md`. Cowork chats live on Claude's servers per account and cannot be moved; the files in your folder and the Cowork VM disk are shared, so the handoff file carries the context. |
 | Tray icon | Left-click opens or closes; right-click offers Settings, Show floating island, Reset position and Quit |
 | Header **tray** button (arrow into a tray) | Minimizes to the tray: collapses the panel and hides the floating island; click the tray icon or press **Ctrl+Alt+M** to restore the island and open the panel. To keep only the tray icon permanently, turn off *Settings → Show floating island* |
 
@@ -249,11 +260,12 @@ The usage integration relies on Claude's local storage format and an unofficial 
 
 | Option | What it does |
 | --- | --- |
-| Back up local data before switch (Settings → Safety) | Creates an encrypted checkpoint of ordinary files in the detected Claude app-data folder while Claude is closed. Switching is cancelled if checkpointing fails. |
-| Recover local backup to folder | Decrypts the latest complete checkpoint into a separate folder, without overwriting Claude's live data. |
-| Restore previous sign-in | Restores the authentication backup from the last switch; separate from local-data recovery. |
+| Back up Claude's data before switching (Settings → Backup & recovery) | Creates an encrypted checkpoint of ordinary files in the detected Claude app-data folder while Claude is closed. Folders Claude rebuilds or downloads itself are skipped (`vm_bundles`, `claude-code`, `claude-code-vm`, browser caches, crash reports and logs), which turns a multi-gigabyte copy into a few megabytes. Files are packed into one stream sealed with AES-256-GCM under a random per-backup key that DPAPI protects for your Windows user. The latest three backups are kept. Switching is cancelled if checkpointing fails. |
+| Restore latest backup to a folder | Decrypts the latest complete checkpoint into a separate folder, without overwriting Claude's live data. Tampered or truncated backups are rejected. |
+| Show Code sessions in every account (Settings → Backup & recovery, on by default) | Claude Desktop lists Code-tab sessions per account (`claude-code-sessions/<account>/<org>/local_<id>.json`), while the conversations themselves live in `~/.claude` and are shared. During each switch, while Claude is closed, Muisland copies every session file into every account's folder; the newest copy wins, nothing is deleted, and replaced copies are kept in `shared-sessions-replaced`. Cowork chats are stored by Claude per account on its servers and are not affected; Codex keeps one local history for all accounts already. |
+| Undo last account switch | Restores the authentication backup from the last switch; separate from local-data recovery. |
 
-Local checkpoints do not export cloud chats, copy external project folders, or capture running processes or virtual machines. Large backups require time and disk space. Recovered files may contain sensitive app data and are not automatically imported into Claude.
+Local checkpoints do not export cloud chats, copy external project folders, or capture running processes or virtual machines. Recovered files may contain sensitive app data and are not automatically imported into Claude.
 
 ## Local storage
 

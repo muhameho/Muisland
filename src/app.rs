@@ -67,12 +67,15 @@ pub enum View {
     SwitchConfirm(usize),
     Remove(usize, String),
     AutoSwitch(usize),
+    QuitConfirm,
+    /// A settings category (see `ui::CATEGORIES`).
+    Section(u8),
 }
 impl View {
     pub fn depth(&self) -> u8 {
         match self {
             View::Home => 0,
-            View::Remove(..) => 2,
+            View::Remove(..) | View::QuitConfirm | View::Section(_) => 2,
             _ => 1,
         }
     }
@@ -111,11 +114,23 @@ pub enum Action {
     Switch(usize),
     Add,
     Protect,
+    ShareSessions,
+    /// Copies the request that makes Cowork write HANDOFF.md before a switch.
+    CopyHandoff,
+    /// Copies the request that continues from HANDOFF.md after a switch.
+    CopyContinue,
+    DismissHandoff,
     Remove,
     RemoveConfirm,
     Rollback,
     Recover,
+    /// Opens a settings category.
+    Category(u8),
+    OpenBackups,
+    /// Asks before quitting.
     Quit,
+    /// Quits for real (after confirmation, or when Windows asks the app to close).
+    QuitNow,
     Confirm,
     Cancel,
     NameField,
@@ -198,8 +213,14 @@ pub struct State {
     dirty: bool,
     tray_key: String,
     tray_hint_shown: bool,
+    /// Backup folder summary, read when the Backup page opens.
+    pub backup: Option<crate::backup::Summary>,
     /// Minimized to the tray for this run; the tray icon or shortcut restores it.
     in_tray: bool,
+    /// Cowork handoff: the request was copied before a switch…
+    pub handoff_copied: bool,
+    /// …and the switch finished, so the continue banner is shown.
+    pub handoff_ready: bool,
     /// When the panel was last opened from the tray, shortcut or hover card.
     opened_at: f32,
     hwnd: HWND,
@@ -562,7 +583,8 @@ pub fn navigate(s: &mut State, next: View, backwards: bool) {
     if !matches!(next, View::AutoSwitch(_)) {
         s.auto_due = None;
     }
-    if matches!(next, View::Preferences) && !matches!(s.view, View::Preferences) {
+    let returning = matches!(next, View::Preferences) && matches!(s.view, View::QuitConfirm);
+    if matches!(next, View::Preferences | View::Section(_)) && next != s.view && !returning {
         s.mem.reset_scroll(1);
     }
     s.slider_drag = None;
@@ -693,6 +715,7 @@ pub fn begin(s: &mut State, op: Op, confirmed: bool) {
         None
     };
     let protect = s.settings.protect_local;
+    let share = s.settings.share_sessions;
     let provider = s.settings.provider;
     let slot = match op {
         Op::Save(i) | Op::Switch(i) => s.settings.accounts[i].slot,
@@ -830,13 +853,21 @@ pub fn begin(s: &mut State, op: Op, confirmed: bool) {
                     Ok(Outcome::Done(op, tr("Account saved · Claude reopened")))
                 }
                 Op::Switch(_) => {
-                    let switched = profiles::switch(slot, protect);
+                    let switched = profiles::switch(slot, protect, share);
                     let reopened = launch.open();
-                    switched.map_err(|e| e.to_string())?;
+                    let shared = switched.map_err(|e| e.to_string())?;
                     reopened.map_err(|_| {
                         tr("Account switched, but Claude could not reopen. Open Claude manually.")
                     })?;
-                    Ok(Outcome::Done(op, tr("Switched successfully")))
+                    let n = shared.map(|s| s.added + s.updated).unwrap_or(0);
+                    Ok(Outcome::Done(
+                        op,
+                        if n > 0 {
+                            tr("Switched · {n} Code sessions shared").replace("{n}", &n.to_string())
+                        } else {
+                            tr("Switched successfully")
+                        },
+                    ))
                 }
                 Op::Rollback => {
                     let restored = profiles::restore_backup();
@@ -1261,7 +1292,7 @@ pub fn activate(s: &mut State, a: Action) {
             }
         }
         Action::Preferences => {
-            if matches!(s.view, View::Preferences) {
+            if matches!(s.view, View::Preferences | View::Section(_)) {
                 navigate(s, View::Home, true)
             } else {
                 navigate(s, View::Preferences, false)
@@ -1273,6 +1304,10 @@ pub fn activate(s: &mut State, a: Action) {
                 View::Remove(i, _) if i < s.settings.accounts.len() => {
                     open_details(s, i, true);
                 }
+                View::QuitConfirm if matches!(s.previous, Some(View::Preferences)) => {
+                    navigate(s, View::Preferences, true)
+                }
+                View::Section(_) => navigate(s, View::Preferences, true),
                 _ => navigate(s, View::Home, true),
             }
         }
@@ -1336,6 +1371,29 @@ pub fn activate(s: &mut State, a: Action) {
             s.settings.protect_local = !s.settings.protect_local;
             persist(s)
         }
+        Action::CopyHandoff => {
+            let text = s.tr(HANDOFF_REQUEST);
+            copy_text(s, text);
+            s.handoff_copied = true;
+            let m = s.tr("Copied · paste it in Cowork and wait for HANDOFF.md");
+            status(s, m, false);
+        }
+        Action::CopyContinue => {
+            let text = s.tr(CONTINUE_REQUEST);
+            copy_text(s, text);
+            s.handoff_ready = false;
+            s.handoff_copied = false;
+            let m = s.tr("Copied · paste it in Cowork, in the same folder");
+            status(s, m, false);
+        }
+        Action::DismissHandoff => {
+            s.handoff_ready = false;
+            s.handoff_copied = false;
+        }
+        Action::ShareSessions => {
+            s.settings.share_sessions = !s.settings.share_sessions;
+            persist(s)
+        }
         Action::Motion => {
             s.settings.reduced_motion = !s.settings.reduced_motion;
             persist(s)
@@ -1343,6 +1401,30 @@ pub fn activate(s: &mut State, a: Action) {
         Action::Rollback => begin(s, Op::Rollback, false),
         Action::Recover => begin(s, Op::Recover, false),
         Action::Quit => {
+            if s.worker.is_some() {
+                let m = s.tr("Wait for the current action before quitting");
+                status(s, m, false)
+            } else if !matches!(s.view, View::QuitConfirm) {
+                navigate(s, View::QuitConfirm, false);
+                s.focus = Action::Cancel;
+            }
+        }
+        Action::Category(i) => {
+            if i == 4 {
+                s.backup = Some(crate::backup::summary());
+            }
+            navigate(s, View::Section(i), false);
+        }
+        Action::OpenBackups => match crate::backup::folder() {
+            Ok(path) => {
+                let _ = std::process::Command::new("explorer").arg(path).spawn();
+            }
+            Err(e) => {
+                let title = s.tr("Couldn't finish this action");
+                notice(s, title, e.to_string(), true);
+            }
+        },
+        Action::QuitNow => {
             if s.worker.is_some() {
                 let m = s.tr("Wait for the current action before quitting");
                 status(s, m, false)
@@ -1364,6 +1446,39 @@ fn replace_selection(s: &mut State) {
         s.edit.clear();
         s.caret = 0;
         s.selected = false;
+    }
+}
+/// Sent to Cowork before a switch; the Arabic version comes from i18n.
+pub const HANDOFF_REQUEST: &str = "I'm about to switch Claude accounts and continue this task in a new Cowork session. Write a file named HANDOFF.md in the working folder with: the goal; what is done (which files changed and where); what is left, as a checklist; important decisions and constraints; and any commands or links needed to continue. Make it self-contained so a new session can continue without this conversation. Reply only once the file is saved.";
+pub const CONTINUE_REQUEST: &str = "Read HANDOFF.md in this folder and continue the task from where it stopped. First summarize the current state in two lines, then carry on with the next unchecked item, and update HANDOFF.md as you finish items.";
+fn copy_text(s: &State, text: &str) {
+    if s.preview || s.hwnd.is_null() {
+        return;
+    }
+    use windows_sys::Win32::System::DataExchange::{EmptyClipboard, SetClipboardData};
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::System::Memory::{GlobalAlloc, GMEM_MOVEABLE};
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        if OpenClipboard(s.hwnd) == 0 {
+            return;
+        }
+        EmptyClipboard();
+        let h = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2);
+        if !h.is_null() {
+            let ptr = GlobalLock(h) as *mut u16;
+            if ptr.is_null() {
+                GlobalFree(h);
+            } else {
+                std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+                GlobalUnlock(h);
+                // The clipboard owns the memory once this succeeds.
+                if SetClipboardData(13, h).is_null() {
+                    GlobalFree(h);
+                }
+            }
+        }
+        CloseClipboard();
     }
 }
 unsafe fn paste(hwnd: HWND, s: &mut State) {
@@ -1761,6 +1876,9 @@ unsafe fn frame(hwnd: HWND, s: &mut State) -> bool {
                 }
                 if let Op::Switch(i) = op {
                     s.active = Some(i);
+                    if s.handoff_copied {
+                        s.handoff_ready = true;
+                    }
                 }
                 refresh_slots(s);
                 if let Op::Save(i) | Op::Switch(i) = op {
@@ -2030,7 +2148,10 @@ unsafe fn tray_menu(hwnd: HWND, s: &mut State) {
                 persist(s);
             }
         }
-        9 => activate(s, Action::Quit),
+        9 => {
+            open_panel(s, hwnd);
+            activate(s, Action::Quit);
+        }
         _ => {}
     }
     s.dirty = true;
@@ -2121,7 +2242,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_CLOSE => {
-            activate(s, Action::Quit);
+            activate(s, Action::QuitNow);
             0
         }
         WM_SETCURSOR => {
@@ -2229,7 +2350,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_MOUSEWHEEL => {
             if s.open && s.slider_drag.is_none() {
                 let delta = ((wp >> 16) as u16) as i16;
-                let index = if matches!(s.view, View::Preferences) {
+                let index = if matches!(s.view, View::Preferences | View::Section(_)) {
                     Some(1)
                 } else if matches!(s.view, View::Home) {
                     Some(0)
@@ -2282,7 +2403,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 unsafe fn key_down(hwnd: HWND, s: &mut State, key: u32) {
     let control = GetKeyState(0x11) < 0;
     let scroll_index = match s.view {
-        View::Preferences => Some(1),
+        View::Preferences | View::Section(_) => Some(1),
         View::Home => Some(0),
         _ => None,
     };
@@ -2363,7 +2484,7 @@ unsafe fn key_down(hwnd: HWND, s: &mut State, key: u32) {
         let a = if s.focus == Action::None {
             if matches!(
                 s.view,
-                View::Confirm(_) | View::SwitchConfirm(_) | View::Remove(_, _)
+                View::Confirm(_) | View::SwitchConfirm(_) | View::Remove(_, _) | View::QuitConfirm
             ) {
                 Action::Cancel
             } else {
@@ -2491,7 +2612,10 @@ pub fn initial(preview: bool, anchor: f32, top: i32) -> State {
         dirty: true,
         tray_key: String::new(),
         tray_hint_shown: false,
+        backup: None,
         in_tray: false,
+        handoff_copied: false,
+        handoff_ready: false,
         opened_at: -10.,
         hwnd: null_mut(),
         blink: 0,
@@ -2673,9 +2797,15 @@ pub fn export_previews(folder: &std::path::Path) -> std::io::Result<()> {
         ("preferences-themes", 0, 0),
         ("preferences-arabic", 4, 1),
         ("usage-settings", 4, 0),
+        ("island-settings", 4, 0),
+        ("backup-settings", 4, 1),
         ("account-name", 4, 0),
         ("switch-confirm", 4, 0),
         ("remove-account", 4, 0),
+        ("quit-confirm", 4, 0),
+        ("handoff-switch", 4, 0),
+        ("handoff-continue", 4, 0),
+        ("handoff-arabic", 4, 1),
         ("notice", 4, 0),
         ("empty", 4, 0),
         ("auto-switch", 4, 0),
@@ -2704,13 +2834,18 @@ pub fn export_previews(folder: &std::path::Path) -> std::io::Result<()> {
         s.ring_weekly = Some(46.);
         s.mem.instant = true;
         match name {
-            "preferences" | "preferences-themes" | "preferences-arabic" => {
-                s.view = View::Preferences
-            }
-            "usage-settings" => {
-                s.view = View::Preferences;
-                s.mem.scroll_target[1] = 99999.;
-                s.mem.scroll[1] = 99999.;
+            "preferences" | "preferences-arabic" => s.view = View::Preferences,
+            "preferences-themes" => s.view = View::Section(0),
+            "island-settings" => s.view = View::Section(1),
+            "usage-settings" => s.view = View::Section(2),
+            "backup-settings" => {
+                s.settings.protect_local = true;
+                s.backup = Some(crate::backup::Summary {
+                    count: 3,
+                    bytes: 21_400_000,
+                    latest: Some(accounts::now() - 7200),
+                });
+                s.view = View::Section(4);
             }
             "account-name" => {
                 s.edit = "حساب الشغل".encode_utf16().collect();
@@ -2721,6 +2856,13 @@ pub fn export_previews(folder: &std::path::Path) -> std::io::Result<()> {
             }
             "switch-confirm" => s.view = View::SwitchConfirm(1),
             "remove-account" => s.view = View::Remove(1, "Work".into()),
+            "quit-confirm" => s.view = View::QuitConfirm,
+            "handoff-switch" => s.view = View::SwitchConfirm(1),
+            "handoff-continue" => s.handoff_ready = true,
+            "handoff-arabic" => {
+                s.handoff_copied = true;
+                s.view = View::SwitchConfirm(1);
+            }
             "notice" => {
                 s.view = View::Notice(
                     s.tr("Already logged in").into(),
@@ -3086,7 +3228,7 @@ mod tests {
         let codex = center_of(&s, Action::CodexTab);
         assert_eq!(hit(&s, claude.0, claude.1), Action::ClaudeTab);
         assert_eq!(hit(&s, codex.0, codex.1), Action::CodexTab);
-        s.view = View::Preferences;
+        s.view = View::Section(0);
         render_main_surface(&mut s).unwrap();
         let a = center_of(&s, Action::Theme(1));
         let b = center_of(&s, Action::Theme(2));
@@ -3222,7 +3364,7 @@ mod tests {
     #[test]
     fn sliders_follow_the_drawn_track_clamp_and_stay_independent() {
         let mut s = sample();
-        s.view = View::Preferences;
+        s.view = View::Section(1);
         open(&mut s);
         let track = s.mem.slider_track(Action::MenuSlider).unwrap();
         assert!((slider_from_x(&s, Action::MenuSlider, track.x - 100.) - 0.75).abs() < 0.001);
@@ -3241,15 +3383,36 @@ mod tests {
     #[test]
     fn settings_scroll_reveals_lower_actions_without_covering_header() {
         let mut s = sample();
-        s.view = View::Preferences;
+        s.view = View::Section(0);
         open(&mut s);
-        assert!(!s.mem.hits.iter().any(|(_, a)| *a == Action::Quit));
         s.mem.scroll_by(1, 100000.);
         render_main_surface(&mut s).unwrap();
         render_main_surface(&mut s).unwrap();
-        assert!(s.mem.hits.iter().any(|(_, a)| *a == Action::Quit));
+        assert!(s.mem.hits.iter().any(|(_, a)| *a == Action::Language(0)));
         let (x, y) = center_of(&s, Action::ClaudeTab);
         assert_eq!(hit(&s, x, y), Action::ClaudeTab);
+    }
+    #[test]
+    fn settings_list_opens_every_category_and_back_returns_to_it() {
+        let mut s = sample();
+        s.view = View::Preferences;
+        open(&mut s);
+        for i in 0..ui::CATEGORIES as u8 {
+            assert!(s.mem.hits.iter().any(|(_, a)| *a == Action::Category(i)));
+        }
+        assert!(s.mem.hits.iter().any(|(_, a)| *a == Action::Quit));
+        activate(&mut s, Action::Category(3));
+        assert!(matches!(s.view, View::Section(3)));
+        s.transition = 1.;
+        s.previous = None;
+        render_main_surface(&mut s).unwrap();
+        assert!(s.mem.hits.iter().any(|(_, a)| *a == Action::Motion));
+        activate(&mut s, Action::Back);
+        assert!(matches!(s.view, View::Preferences));
+        activate(&mut s, Action::Category(4));
+        assert!(s.backup.is_some(), "the backup page reads the folder summary");
+        activate(&mut s, Action::Preferences);
+        assert!(matches!(s.view, View::Home));
     }
     #[test]
     fn arabic_layout_mirrors_controls() {
@@ -3352,6 +3515,28 @@ mod tests {
         assert_eq!(hit(&s, x, y), Action::Toggle);
         let (x, y) = center_of(&s, Action::ToTray);
         assert_eq!(hit(&s, x, y), Action::ToTray);
+    }
+    #[test]
+    fn quit_asks_first_and_cancel_returns_to_settings() {
+        let mut s = initial(true, 0., 0);
+        s.open = true;
+        navigate(&mut s, View::Preferences, false);
+        activate(&mut s, Action::Quit);
+        assert!(matches!(s.view, View::QuitConfirm));
+        assert_eq!(s.focus, Action::Cancel);
+        activate(&mut s, Action::Cancel);
+        assert!(matches!(s.view, View::Preferences));
+    }
+    #[test]
+    fn handoff_banner_appears_only_after_a_switch_that_followed_a_copy() {
+        let mut s = initial(true, 0., 0);
+        activate(&mut s, Action::CopyHandoff);
+        assert!(s.handoff_copied && !s.handoff_ready);
+        activate(&mut s, Action::CopyContinue);
+        assert!(!s.handoff_copied && !s.handoff_ready);
+        activate(&mut s, Action::CopyHandoff);
+        activate(&mut s, Action::DismissHandoff);
+        assert!(!s.handoff_copied && !s.handoff_ready);
     }
     #[test]
     fn entries_holding_the_same_account_are_flagged() {

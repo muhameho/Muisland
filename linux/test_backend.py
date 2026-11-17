@@ -212,6 +212,29 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertEqual((target / "config.json").read_text(), "local")
         self.assertEqual((source / "config.json").read_text(), "live")
 
+    def test_backup_skips_caches_and_keeps_three(self):
+        source = self.root / "claude"
+        for folder in ("vm_bundles/claudevm.bundle", "Code Cache/js", "Service Worker/CacheStorage", "sessions"):
+            (source / folder).mkdir(parents=True)
+        (source / "vm_bundles/claudevm.bundle/rootfs.vhdx").write_bytes(b"x" * 64)
+        (source / "vm_bundles/claudevm.bundle/sessiondata.vhdx").write_bytes(b"d" * 8)
+        (source / "Code Cache/js/a").write_bytes(b"x")
+        (source / "Service Worker/CacheStorage/b").write_bytes(b"x")
+        (source / "sessions/s.json").write_text("{}")
+        (source / "config.json").write_text("local")
+        stamps = []
+        for _ in range(4):
+            stamps.append(self.vault.checkpoint(source))
+        kept = sorted(p.name for p in (self.vault.root / "backups").iterdir())
+        self.assertEqual(kept, sorted(stamps[-3:]))
+        target = Path(self.vault.recover())
+        self.assertEqual((target / "config.json").read_text(), "local")
+        self.assertTrue((target / "sessions/s.json").is_file())
+        self.assertTrue((target / "vm_bundles/claudevm.bundle/sessiondata.vhdx").is_file())
+        self.assertFalse((target / "vm_bundles/claudevm.bundle/rootfs.vhdx").exists())
+        self.assertFalse((target / "Code Cache").exists())
+        self.assertFalse((target / "Service Worker/CacheStorage").exists())
+
     def test_backup_refuses_symlinks(self):
         source = self.root / "claude"
         source.mkdir()

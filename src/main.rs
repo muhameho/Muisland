@@ -18,6 +18,8 @@ mod polling;
 #[cfg(windows)]
 mod profiles;
 #[cfg(windows)]
+mod sessions;
+#[cfg(windows)]
 mod system;
 #[cfg(windows)]
 mod theme;

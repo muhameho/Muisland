@@ -717,7 +717,12 @@ pub fn sign_in_another(saved_slot: usize, identity: &str) -> io::Result<()> {
     }
     Ok(())
 }
-pub fn switch(index: usize, protect_local: bool) -> io::Result<()> {
+/// Returns how many Code-tab sessions were shared, when sharing is on.
+pub fn switch(
+    index: usize,
+    protect_local: bool,
+    share_sessions: bool,
+) -> io::Result<Option<crate::sessions::Shared>> {
     if is_current(index).unwrap_or(false) {
         return Err(io::Error::other("This account is already logged in."));
     }
@@ -748,7 +753,10 @@ pub fn switch(index: usize, protect_local: bool) -> io::Result<()> {
             }
         )));
     }
-    Ok(())
+    // Best effort: a failure here must not undo a completed switch.
+    Ok(share_sessions
+        .then(|| crate::sessions::share(&dest, &base().ok()?.join("shared-sessions-replaced")).ok())
+        .flatten())
 }
 pub fn restore_backup() -> io::Result<()> {
     check_closed()?;

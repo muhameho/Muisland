@@ -778,6 +778,57 @@
         margin: 10px 0 0;
       }
 
+      .cat {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        text-align: start;
+        background: var(--surface);
+        border-radius: 16px;
+        padding: 10px 14px 10px 10px;
+        margin-bottom: 7px;
+        box-shadow: inset 0 0 0 1px var(--edge);
+        transition:
+          transform 0.4s var(--spring),
+          background 0.2s;
+      }
+      html[dir="rtl"] .cat {
+        padding: 10px 10px 10px 14px;
+      }
+      .cat:hover {
+        background: color-mix(in srgb, var(--surface) 55%, var(--raised));
+        transform: translateY(-1px);
+      }
+      .cat:active {
+        transform: scale(0.985);
+      }
+      .cat-icon {
+        width: 38px;
+        height: 38px;
+        flex: none;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .cat-icon svg {
+        width: 20px;
+        height: 20px;
+      }
+      .cat-go {
+        color: var(--muted);
+        transition: transform 0.4s var(--spring), color 0.2s;
+      }
+      .cat:hover .cat-go {
+        color: var(--text);
+        transform: translateX(calc(3px * var(--dir)));
+      }
+      .cat .lbl b {
+        font-size: 14.5px;
+      }
+
       /* Detail, confirmation and status pages */
       .field {
         width: 100%;
@@ -1499,9 +1550,16 @@
       const PROVIDER_COLOR = { claude: "#E8845E", codex: "#9AA3B8" };
 
       // Arabic strings shared with the Windows app (src/i18n.rs), then Linux and demo extras.
-      const AR = {"Accounts":"الحسابات","Account details":"تفاصيل الحساب","New account":"حساب جديد","Settings":"الإعدادات","Add":"إضافة","Add account":"إضافة حساب","Name":"الاسم","Plan":"الخطة","Active":"نشط","Saved":"محفوظ","Save":"حفظ","Save name":"حفظ الاسم","Save account":"حفظ الحساب","Remove":"حذف","Discard":"تجاهل","Cancel":"إلغاء","Got it":"تمام","Unavailable":"غير متاحة","1 account":"حساب واحد","{n} accounts":"{n} حسابات","Your account":"حسابك","another account":"حساب آخر","No linked account":"لا يوجد حساب مرتبط","5-hour":"٥ ساعات","Weekly":"أسبوعي","Session":"الجلسة","Extended":"ممتد","5H":"٥س","7D":"٧ي","SES":"جلسة","EXT":"ممتد","MAX":"الأعلى","Not available":"غير متاح","Reset time unavailable":"وقت التجديد غير معروف","Reset due · refreshing":"حان التجديد · جاري التحديث","Resets in {t}":"يتجدد بعد {t}","{d}d {h}h":"{d}ي {h}س","{h}h {m}m":"{h}س {m}د","{m}m":"{m}د","just now":"الآن","{n}m ago":"منذ {n}د","{n}h ago":"منذ {n}س","{n}d ago":"منذ {n}ي","Usage not available yet":"الاستخدام غير متاح بعد","Live · updated {age}":"مباشر · آخر تحديث {age}","Waiting for usage…":"في انتظار بيانات الاستخدام…","Usage updates paused":"تحديثات الاستخدام متوقفة","Working on your account…":"جاري العمل على حسابك…","Preview · sample data":"معاينة · بيانات تجريبية","Preview · sample values":"معاينة · قيم تجريبية","Active · sample data":"نشط · بيانات تجريبية","Saved · sample data":"محفوظ · بيانات تجريبية"," · stale":" · قديمة","Not saved · Save to link":"غير محفوظ · اضغط حفظ للربط","Draft · enter a name, then save":"مسودة · اكتب اسمًا ثم احفظ","Usage unavailable · see details":"الاستخدام غير متاح · راجع التفاصيل","Saved · reading usage…":"محفوظ · جاري قراءة الاستخدام…","Saved · usage not yet read":"محفوظ · لم تتم قراءة الاستخدام بعد","Updates automatically from your Claude session.":"يتحدث تلقائيًا من جلسة Claude.","Updates through Codex app-server using file credentials.":"يتحدث عبر خادم Codex باستخدام بيانات الدخول المحفوظة.","Codex switches sign-ins; open sessions keep their work.":"Codex يبدّل تسجيل الدخول فقط؛ الجلسات المفتوحة تحتفظ بعملها.","Your island starts here.":"جزيرتك تبدأ من هنا.","Add an account, then save its sign-in.":"أضف حسابًا ثم احفظ تسجيل دخوله.","Click to open":"اضغط للفتح","Switched · usage refreshes shortly":"تم التبديل · سيتحدث الاستخدام قريبًا","APPEARANCE":"المظهر","Match Windows":"مثل ويندوز","FLOATING ISLAND":"الجزيرة العائمة","Style":"الشكل","Circle":"دائرة","Pill":"كبسولة","Center shows":"يعرض في المنتصف","Percentage":"النسبة","Logo":"الشعار","Percentage of":"نسبة","Highest":"الأعلى","Island size":"حجم الجزيرة","Hover card size":"حجم البطاقة","Menu size":"حجم القائمة","LANGUAGE":"اللغة","BEHAVIOR":"السلوك","Reduce motion":"تقليل الحركة","Start with Windows":"التشغيل مع ويندوز","Tray icon":"أيقونة شريط المهام","Live usage ring in the notification area":"حلقة استخدام مباشرة بجوار الساعة","Keyboard shortcut":"اختصار لوحة المفاتيح","Ctrl + Alt + M opens Muisland":"Ctrl + Alt + M يفتح Muisland","ALERTS & AUTO-SWITCH":"التنبيهات والتبديل التلقائي","Notify at usage thresholds":"نبّهني عند حدود الاستخدام","Session limit":"حد الجلسة","Weekly limit":"الحد الأسبوعي","Auto-switch at these limits":"بدّل تلقائيًا عند هذه الحدود","Ask first when work may be open":"اسأل أولًا لو فيه شغل مفتوح","Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed.":"التبديل التلقائي ينتظر ١٥ ثانية. ألغِه أو أغلق الجزيرة لإيقافه. قد تكون هناك مهام تعمل في التطبيقات المفتوحة؛ اكتشاف الخمول غير مضمون.","SAFETY & RECOVERY":"الأمان والاستعادة","Back up local data before switch":"نسخ احتياطي للبيانات قبل التبديل","Encrypted checkpoint while Claude is closed":"نقطة استعادة مشفرة أثناء إغلاق Claude","Restore previous sign-in":"استعادة تسجيل الدخول السابق","Recover local backup to folder":"استرجاع النسخة الاحتياطية إلى مجلد","Quit Muisland":"إنهاء Muisland","Unofficial · not affiliated with Anthropic or OpenAI":"غير رسمي · لا يتبع Anthropic أو OpenAI","Open Muisland":"فتح Muisland","Close Muisland":"إغلاق Muisland","Show floating island":"إظهار الجزيرة العائمة","Reset position":"إعادة ضبط المكان","Switch account?":"تبديل الحساب؟","Confirm switch":"تأكيد التبديل","Switch now":"بدّل الآن","Confirm to open this saved account. If Claude is running, it will close first. Local tasks may stop and unsaved work may be lost.":"أكّد لفتح هذا الحساب المحفوظ. لو Claude شغال هيتقفل الأول. المهام المحلية ممكن تتوقف والشغل غير المحفوظ ممكن يضيع.","Switch the Codex file sign-in? New CLI sessions use this account. Restart open sessions to reload. The Desktop host may keep its own login.":"تبديل تسجيل دخول Codex؟ جلسات CLI الجديدة ستستخدم هذا الحساب. أعد تشغيل الجلسات المفتوحة. تطبيق سطح المكتب قد يحتفظ بتسجيل دخوله.","Switch the Codex sign-in cache? New Codex CLI sessions use this account. Restart existing sessions to reload it; the Desktop app may retain its own host login.":"تبديل تسجيل دخول Codex؟ جلسات Codex CLI الجديدة ستستخدم هذا الحساب. أعد تشغيل الجلسات الحالية؛ تطبيق سطح المكتب قد يحتفظ بتسجيل دخوله.","Add another account?":"إضافة حساب آخر؟","Restore previous sign-in?":"استعادة تسجيل الدخول السابق؟","Close Claude & save?":"إغلاق Claude والحفظ؟","Close Claude & switch?":"إغلاق Claude والتبديل؟","Claude's current account is already saved. Claude will close and reopen at its sign-in screen so you can add another one. The saved account is not signed out.":"الحساب الحالي في Claude محفوظ بالفعل. Claude هيتقفل ويفتح على شاشة تسجيل الدخول علشان تضيف حساب تاني. الحساب المحفوظ مش هيتعمله تسجيل خروج.","Claude Desktop will close. Local tasks may stop and unsaved work may be lost. Nothing closes until you confirm.":"Claude Desktop هيتقفل. المهام المحلية ممكن تتوقف والشغل غير المحفوظ ممكن يضيع. مفيش حاجة هتتقفل قبل ما تأكد.","Close & sign in":"إغلاق وتسجيل الدخول","Close & restore":"إغلاق واستعادة","Close & save":"إغلاق وحفظ","Close & switch":"إغلاق وتبديل","Remove this account?":"حذف هذا الحساب؟","Remove account":"حذف الحساب","Remove {name} from Muisland? The current sign-in, chats and files remain unchanged. The saved sign-in is moved to an encrypted local archive.":"حذف {name} من Muisland؟ تسجيل الدخول الحالي والمحادثات والملفات لن تتغير. تسجيل الدخول المحفوظ ينتقل إلى أرشيف محلي مشفر.","Usage limit reached":"تم الوصول لحد الاستخدام","Switch to {name}? Claude may close and running projects or unsaved work may stop. Muisland cannot reliably tell whether a task is idle. Codex sessions need a restart to use the new sign-in.":"التبديل إلى {name}؟ قد يُغلق Claude وقد تتوقف المشاريع الجارية أو الشغل غير المحفوظ. لا يستطيع Muisland معرفة إن كانت المهمة خاملة بدقة. جلسات Codex تحتاج إعادة تشغيل لاستخدام الحساب الجديد.","Switching in {n} seconds":"التبديل خلال {n} ثانية","App may be working · confirmation required":"التطبيق قد يكون يعمل · التأكيد مطلوب","Already logged in":"مسجّل الدخول بالفعل","{name} is already logged into {app}. No sign-in was changed.":"{name} مسجّل الدخول بالفعل في {app}. لم يتغير شيء.","Sign in to Claude":"سجّل الدخول إلى Claude","Claude opened. Complete sign-in there, then choose Save again. Your existing saved accounts were kept.":"تم فتح Claude. أكمل تسجيل الدخول هناك ثم اضغط حفظ مرة أخرى. حساباتك المحفوظة كما هي.","Sign in to the other account":"سجّل الدخول إلى الحساب الآخر","{name} is already saved and was not signed out. Claude reopened at its sign-in screen: sign in to the other account there, then choose Save again. Avoid Claude's own Log out; it ends a saved session.":"{name} محفوظ بالفعل ولم يتم تسجيل خروجه. Claude فتح على شاشة تسجيل الدخول: سجّل الدخول بالحساب الآخر ثم اضغط حفظ مرة أخرى. تجنب زر تسجيل الخروج في Claude لأنه ينهي الجلسة المحفوظة.","Couldn't finish this action":"تعذّر إكمال العملية","Usage alert":"تنبيه الاستخدام","{name} reached a configured usage threshold.":"{name} وصل لحد الاستخدام المحدد.","No saved account has fresh, lower usage in both windows. No switch was made.":"لا يوجد حساب محفوظ باستخدام أقل وحديث في الفترتين. لم يتم التبديل.","Open accounts to review usage or switch.":"افتح الحسابات لمراجعة الاستخدام أو التبديل.","Auto-switch paused":"تم إيقاف التبديل التلقائي","Usage or account state changed. Review the accounts and switch manually.":"تغيّر الاستخدام أو حالة الحساب. راجع الحسابات وبدّل يدويًا.","Account slots full":"خانات الحسابات ممتلئة","You can save up to {n} accounts on this device.":"يمكنك حفظ حتى {n} حسابًا على هذا الجهاز.","Could not remove account":"تعذّر حذف الحساب","Preferences could not be saved. Your account entry has been kept.":"تعذّر حفظ الإعدادات. تم الإبقاء على الحساب.","Account removed from Muisland":"تم حذف الحساب من Muisland","Account name saved":"تم حفظ اسم الحساب","Could not save the account name":"تعذّر حفظ اسم الحساب","Could not save your preferences":"تعذّر حفظ إعداداتك","Could not change the startup setting":"تعذّر تغيير إعداد التشغيل مع ويندوز","Use a name of 1–32 characters.":"استخدم اسمًا من ١ إلى ٣٢ حرفًا.","Please wait for the current action":"انتظر انتهاء العملية الحالية","Wait for the current action":"انتظر انتهاء العملية الحالية","Wait for the current action before removing an account":"انتظر انتهاء العملية الحالية قبل حذف حساب","Wait for the current action before quitting":"انتظر انتهاء العملية الحالية قبل الخروج","Wait for the current operation before changing apps":"انتظر انتهاء العملية الحالية قبل تغيير التطبيق","Closing Claude, then continuing…":"جاري إغلاق Claude ثم المتابعة…","Checking your account…":"جاري التحقق من حسابك…","Signed-in account changed. Auto-switch cancelled.":"تغيّر الحساب المسجّل. تم إلغاء التبديل التلقائي.","Preview complete · no account changes":"انتهت المعاينة · لم يتغير أي حساب","Codex switches only its sign-in cache. Chats and working folders are not moved or restored.":"Codex يبدّل تسجيل الدخول فقط. المحادثات ومجلدات العمل لا تُنقل ولا تُستعاد.","Codex sign-in switched · restart existing Codex sessions to reload":"تم تبديل دخول Codex · أعد تشغيل جلسات Codex الحالية","Codex sign-in saved":"تم حفظ دخول Codex","Open Claude Desktop, sign in, then choose Save again.":"افتح Claude Desktop وسجّل الدخول ثم اضغط حفظ مرة أخرى.","Claude is ready for another sign-in but could not reopen. Open Claude manually.":"Claude جاهز لتسجيل دخول آخر لكن تعذّر فتحه. افتح Claude يدويًا.","Account saved · Claude reopened":"تم حفظ الحساب · أعيد فتح Claude","Account switched, but Claude could not reopen. Open Claude manually.":"تم تبديل الحساب لكن تعذّر فتح Claude. افتحه يدويًا.","Switched successfully":"تم التبديل بنجاح","Previous sign-in restored, but Claude could not reopen. Open Claude manually.":"تمت استعادة تسجيل الدخول السابق لكن تعذّر فتح Claude. افتحه يدويًا.","Previous sign-in restored · Claude reopened":"تمت استعادة تسجيل الدخول السابق · أعيد فتح Claude","Backup recovered to a separate folder":"تم استرجاع النسخة الاحتياطية في مجلد منفصل"};
+      const AR = {"Accounts":"الحسابات","Account details":"تفاصيل الحساب","New account":"حساب جديد","Settings":"الإعدادات","Add":"إضافة","Add account":"إضافة حساب","Name":"الاسم","Plan":"الخطة","Active":"نشط","Saved":"محفوظ","Save":"حفظ","Save name":"حفظ الاسم","Save account":"حفظ الحساب","Remove":"حذف","Discard":"تجاهل","Cancel":"إلغاء","Got it":"تمام","Unavailable":"غير متاحة","1 account":"حساب واحد","{n} accounts":"{n} حسابات","Your account":"حسابك","another account":"حساب آخر","No linked account":"لا يوجد حساب مرتبط","5-hour":"٥ ساعات","Weekly":"أسبوعي","Session":"الجلسة","Extended":"ممتد","5H":"٥س","7D":"٧ي","SES":"جلسة","EXT":"ممتد","MAX":"الأعلى","Not available":"غير متاح","Reset time unavailable":"وقت التجديد غير معروف","Reset due · refreshing":"حان التجديد · جاري التحديث","Resets in {t}":"يتجدد بعد {t}","{d}d {h}h":"{d}ي {h}س","{h}h {m}m":"{h}س {m}د","{m}m":"{m}د","just now":"الآن","{n}m ago":"منذ {n}د","{n}h ago":"منذ {n}س","{n}d ago":"منذ {n}ي","Usage not available yet":"الاستخدام غير متاح بعد","Live · updated {age}":"مباشر · آخر تحديث {age}","Waiting for usage…":"في انتظار بيانات الاستخدام…","Usage updates paused":"تحديثات الاستخدام متوقفة","Working on your account…":"جاري العمل على حسابك…","Preview · sample data":"معاينة · بيانات تجريبية","Preview · sample values":"معاينة · قيم تجريبية","Active · sample data":"نشط · بيانات تجريبية","Saved · sample data":"محفوظ · بيانات تجريبية"," · stale":" · قديمة","Not saved · Save to link":"غير محفوظ · اضغط حفظ للربط","Draft · enter a name, then save":"مسودة · اكتب اسمًا ثم احفظ","Usage unavailable · see details":"الاستخدام غير متاح · راجع التفاصيل","Saved · reading usage…":"محفوظ · جاري قراءة الاستخدام…","Saved · usage not yet read":"محفوظ · لم تتم قراءة الاستخدام بعد","Updates automatically from your Claude session.":"يتحدث تلقائيًا من جلسة Claude.","Updates through Codex app-server using file credentials.":"يتحدث عبر خادم Codex باستخدام بيانات الدخول المحفوظة.","Codex switches sign-ins; open sessions keep their work.":"Codex يبدّل تسجيل الدخول فقط؛ الجلسات المفتوحة تحتفظ بعملها.","Your island starts here.":"جزيرتك تبدأ من هنا.","Add an account, then save its sign-in.":"أضف حسابًا ثم احفظ تسجيل دخوله.","Click to open":"اضغط للفتح","Switched · usage refreshes shortly":"تم التبديل · سيتحدث الاستخدام قريبًا","APPEARANCE":"المظهر","Match Windows":"مثل ويندوز","FLOATING ISLAND":"الجزيرة العائمة","Style":"الشكل","Circle":"دائرة","Pill":"كبسولة","Center shows":"يعرض في المنتصف","Percentage":"النسبة","Logo":"الشعار","Percentage of":"نسبة","Highest":"الأعلى","Island size":"حجم الجزيرة","Hover card size":"حجم البطاقة","Menu size":"حجم القائمة","LANGUAGE":"اللغة","BEHAVIOR":"السلوك","Reduce motion":"تقليل الحركة","Start with Windows":"التشغيل مع ويندوز","Tray icon":"أيقونة شريط المهام","Live usage ring in the notification area":"حلقة استخدام مباشرة بجوار الساعة","Keyboard shortcut":"اختصار لوحة المفاتيح","Ctrl + Alt + M opens Muisland":"Ctrl + Alt + M يفتح Muisland","ALERTS & AUTO-SWITCH":"التنبيهات والتبديل التلقائي","Notify at usage thresholds":"نبّهني عند حدود الاستخدام","Session limit":"حد الجلسة","Weekly limit":"الحد الأسبوعي","Auto-switch at these limits":"بدّل تلقائيًا عند هذه الحدود","Ask first when work may be open":"اسأل أولًا لو فيه شغل مفتوح","Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed.":"التبديل التلقائي ينتظر ١٥ ثانية. ألغِه أو أغلق الجزيرة لإيقافه. قد تكون هناك مهام تعمل في التطبيقات المفتوحة؛ اكتشاف الخمول غير مضمون.","SAFETY & RECOVERY":"الأمان والاستعادة","Back up local data before switch":"نسخ احتياطي للبيانات قبل التبديل","Encrypted checkpoint while Claude is closed":"نقطة استعادة مشفرة أثناء إغلاق Claude","Restore previous sign-in":"استعادة تسجيل الدخول السابق","Recover local backup to folder":"استرجاع النسخة الاحتياطية إلى مجلد","Quit Muisland":"إنهاء Muisland","Unofficial · not affiliated with Anthropic or OpenAI":"غير رسمي · لا يتبع Anthropic أو OpenAI","Open Muisland":"فتح Muisland","Close Muisland":"إغلاق Muisland","Show floating island":"إظهار الجزيرة العائمة","Minimize to tray":"تصغير إلى منطقة الإشعارات","Appearance & language":"المظهر واللغة","Floating island":"الجزيرة العائمة","Alerts & auto-switch":"التنبيهات والتبديل التلقائي","General":"عام","Backup & recovery":"النسخ الاحتياطي والاستعادة","THEME":"السمة","LOOK":"الشكل","SIZE":"الحجم","SIGN-IN":"تسجيل الدخول","Inside the circle":"داخل الدائرة","Show usage for":"عرض استخدام","Panel size":"حجم اللوحة","Hidden":"مخفية","Off":"متوقف","Auto-switch on":"التبديل التلقائي مفعّل","Starts with Windows":"يبدأ مع Windows","No animations":"بدون حركات","Show tray icon":"إظهار أيقونة منطقة الإشعارات","Remove animations":"إزالة الحركات","Changes appear instantly":"تظهر التغييرات فورًا","Usage alerts":"تنبيهات الاستخدام","Notify when an account reaches the limits below":"تنبيه عندما يصل حساب إلى الحدود التالية","{label} alert at":"تنبيه {label} عند","Switch accounts automatically":"تبديل الحسابات تلقائيًا","Moves to the saved account with the most room":"ينتقل إلى الحساب المحفوظ الأكثر توفرًا","Ask before switching if Claude may be busy":"اسأل قبل التبديل إذا كان Claude مشغولًا","Back up Claude's data before switching":"نسخ بيانات Claude احتياطيًا قبل التبديل","Encrypted chats, sessions and settings; caches skipped":"نسخة مشفّرة دون ملفات التخزين المؤقت","Backup before switching: on":"النسخ قبل التبديل: مفعّل","Backup before switching: off":"النسخ قبل التبديل: متوقف","last {age}":"آخرها {age}","{n} backups · {size} · latest {age}":"{n} نسخ · {size} · آخرها {age}","No backups yet.":"لا توجد نسخ احتياطية بعد.","The latest {n} are kept; older ones are deleted automatically.":"تُحفظ آخر {n} نسخ، وتُحذف الأقدم تلقائيًا.","Restore latest backup to a folder":"استعادة آخر نسخة احتياطية إلى مجلد","Open backups folder":"فتح مجلد النسخ الاحتياطية","Local data backup is for Claude. Open the Claude tab to change it.":"النسخ الاحتياطي للبيانات المحلية خاص بـ Claude. افتح تبويب Claude لتغييره.","Undo last account switch":"التراجع عن آخر تبديل للحساب","Undo the last account switch":"التراجع عن آخر تبديل للحساب","Puts back the sign-in that was active before the last switch.":"يُعيد تسجيل الدخول الذي كان نشطًا قبل آخر تبديل.","Quit Muisland?":"إنهاء Muisland؟","Quit":"إنهاء","The floating island and tray icon will close and usage stops updating. Your saved accounts stay on this computer.":"ستُغلق الجزيرة العائمة وأيقونة منطقة الإشعارات ويتوقف تحديث الاستخدام. تبقى حساباتك المحفوظة على هذا الجهاز.","Same account as {name}":"نفس حساب {name}","This Codex account is already saved as {name}. Sign in to a different account in Codex, then choose Save again.":"حساب Codex هذا محفوظ بالفعل باسم {name}. سجّل الدخول إلى حساب آخر في Codex، ثم اختر حفظ مرة أخرى.","When off, Muisland stays in the tray":"عند الإيقاف يبقى Muisland في منطقة الإشعارات","Muisland is in the tray":"Muisland في منطقة الإشعارات","Click its icon or press Ctrl+Alt+M to open it.":"انقر أيقونته أو اضغط Ctrl+Alt+M لفتحه.","Click its icon to open it.":"انقر أيقونته لفتحه.","Reset position":"إعادة ضبط المكان","Switch account?":"تبديل الحساب؟","Confirm switch":"تأكيد التبديل","Switch now":"بدّل الآن","Confirm to open this saved account. If Claude is running, it will close first. Local tasks may stop and unsaved work may be lost.":"أكّد لفتح هذا الحساب المحفوظ. لو Claude شغال هيتقفل الأول. المهام المحلية ممكن تتوقف والشغل غير المحفوظ ممكن يضيع.","Switch the Codex file sign-in? New CLI sessions use this account. Restart open sessions to reload. The Desktop host may keep its own login.":"تبديل تسجيل دخول Codex؟ جلسات CLI الجديدة ستستخدم هذا الحساب. أعد تشغيل الجلسات المفتوحة. تطبيق سطح المكتب قد يحتفظ بتسجيل دخوله.","Switch the Codex sign-in cache? New Codex CLI sessions use this account. Restart existing sessions to reload it; the Desktop app may retain its own host login.":"تبديل تسجيل دخول Codex؟ جلسات Codex CLI الجديدة ستستخدم هذا الحساب. أعد تشغيل الجلسات الحالية؛ تطبيق سطح المكتب قد يحتفظ بتسجيل دخوله.","Add another account?":"إضافة حساب آخر؟","Restore previous sign-in?":"استعادة تسجيل الدخول السابق؟","Close Claude & save?":"إغلاق Claude والحفظ؟","Close Claude & switch?":"إغلاق Claude والتبديل؟","Claude's current account is already saved. Claude will close and reopen at its sign-in screen so you can add another one. The saved account is not signed out.":"الحساب الحالي في Claude محفوظ بالفعل. Claude هيتقفل ويفتح على شاشة تسجيل الدخول علشان تضيف حساب تاني. الحساب المحفوظ مش هيتعمله تسجيل خروج.","Claude Desktop will close. Local tasks may stop and unsaved work may be lost. Nothing closes until you confirm.":"Claude Desktop هيتقفل. المهام المحلية ممكن تتوقف والشغل غير المحفوظ ممكن يضيع. مفيش حاجة هتتقفل قبل ما تأكد.","Close & sign in":"إغلاق وتسجيل الدخول","Close & restore":"إغلاق واستعادة","Close & save":"إغلاق وحفظ","Close & switch":"إغلاق وتبديل","Remove this account?":"حذف هذا الحساب؟","Remove account":"حذف الحساب","Remove {name} from Muisland? The current sign-in, chats and files remain unchanged. The saved sign-in is moved to an encrypted local archive.":"حذف {name} من Muisland؟ تسجيل الدخول الحالي والمحادثات والملفات لن تتغير. تسجيل الدخول المحفوظ ينتقل إلى أرشيف محلي مشفر.","Usage limit reached":"تم الوصول لحد الاستخدام","Switch to {name}? Claude may close and running projects or unsaved work may stop. Muisland cannot reliably tell whether a task is idle. Codex sessions need a restart to use the new sign-in.":"التبديل إلى {name}؟ قد يُغلق Claude وقد تتوقف المشاريع الجارية أو الشغل غير المحفوظ. لا يستطيع Muisland معرفة إن كانت المهمة خاملة بدقة. جلسات Codex تحتاج إعادة تشغيل لاستخدام الحساب الجديد.","Switching in {n} seconds":"التبديل خلال {n} ثانية","App may be working · confirmation required":"التطبيق قد يكون يعمل · التأكيد مطلوب","Already logged in":"مسجّل الدخول بالفعل","{name} is already logged into {app}. No sign-in was changed.":"{name} مسجّل الدخول بالفعل في {app}. لم يتغير شيء.","Sign in to Claude":"سجّل الدخول إلى Claude","Claude opened. Complete sign-in there, then choose Save again. Your existing saved accounts were kept.":"تم فتح Claude. أكمل تسجيل الدخول هناك ثم اضغط حفظ مرة أخرى. حساباتك المحفوظة كما هي.","Sign in to the other account":"سجّل الدخول إلى الحساب الآخر","{name} is already saved and was not signed out. Claude reopened at its sign-in screen: sign in to the other account there, then choose Save again. Avoid Claude's own Log out; it ends a saved session.":"{name} محفوظ بالفعل ولم يتم تسجيل خروجه. Claude فتح على شاشة تسجيل الدخول: سجّل الدخول بالحساب الآخر ثم اضغط حفظ مرة أخرى. تجنب زر تسجيل الخروج في Claude لأنه ينهي الجلسة المحفوظة.","Couldn't finish this action":"تعذّر إكمال العملية","Usage alert":"تنبيه الاستخدام","{name} reached a configured usage threshold.":"{name} وصل لحد الاستخدام المحدد.","No saved account has fresh, lower usage in both windows. No switch was made.":"لا يوجد حساب محفوظ باستخدام أقل وحديث في الفترتين. لم يتم التبديل.","Open accounts to review usage or switch.":"افتح الحسابات لمراجعة الاستخدام أو التبديل.","Auto-switch paused":"تم إيقاف التبديل التلقائي","Usage or account state changed. Review the accounts and switch manually.":"تغيّر الاستخدام أو حالة الحساب. راجع الحسابات وبدّل يدويًا.","Account slots full":"خانات الحسابات ممتلئة","You can save up to {n} accounts on this device.":"يمكنك حفظ حتى {n} حسابًا على هذا الجهاز.","Could not remove account":"تعذّر حذف الحساب","Preferences could not be saved. Your account entry has been kept.":"تعذّر حفظ الإعدادات. تم الإبقاء على الحساب.","Account removed from Muisland":"تم حذف الحساب من Muisland","Account name saved":"تم حفظ اسم الحساب","Could not save the account name":"تعذّر حفظ اسم الحساب","Could not save your preferences":"تعذّر حفظ إعداداتك","Could not change the startup setting":"تعذّر تغيير إعداد التشغيل مع ويندوز","Use a name of 1–32 characters.":"استخدم اسمًا من ١ إلى ٣٢ حرفًا.","Please wait for the current action":"انتظر انتهاء العملية الحالية","Wait for the current action":"انتظر انتهاء العملية الحالية","Wait for the current action before removing an account":"انتظر انتهاء العملية الحالية قبل حذف حساب","Wait for the current action before quitting":"انتظر انتهاء العملية الحالية قبل الخروج","Wait for the current operation before changing apps":"انتظر انتهاء العملية الحالية قبل تغيير التطبيق","Closing Claude, then continuing…":"جاري إغلاق Claude ثم المتابعة…","Checking your account…":"جاري التحقق من حسابك…","Signed-in account changed. Auto-switch cancelled.":"تغيّر الحساب المسجّل. تم إلغاء التبديل التلقائي.","Preview complete · no account changes":"انتهت المعاينة · لم يتغير أي حساب","Codex switches only its sign-in cache. Chats and working folders are not moved or restored.":"Codex يبدّل تسجيل الدخول فقط. المحادثات ومجلدات العمل لا تُنقل ولا تُستعاد.","Codex sign-in switched · restart existing Codex sessions to reload":"تم تبديل دخول Codex · أعد تشغيل جلسات Codex الحالية","Codex sign-in saved":"تم حفظ دخول Codex","Open Claude Desktop, sign in, then choose Save again.":"افتح Claude Desktop وسجّل الدخول ثم اضغط حفظ مرة أخرى.","Claude is ready for another sign-in but could not reopen. Open Claude manually.":"Claude جاهز لتسجيل دخول آخر لكن تعذّر فتحه. افتح Claude يدويًا.","Account saved · Claude reopened":"تم حفظ الحساب · أعيد فتح Claude","Account switched, but Claude could not reopen. Open Claude manually.":"تم تبديل الحساب لكن تعذّر فتح Claude. افتحه يدويًا.","Switched successfully":"تم التبديل بنجاح","Previous sign-in restored, but Claude could not reopen. Open Claude manually.":"تمت استعادة تسجيل الدخول السابق لكن تعذّر فتح Claude. افتحه يدويًا.","Previous sign-in restored · Claude reopened":"تمت استعادة تسجيل الدخول السابق · أعيد فتح Claude","Backup recovered to a separate folder":"تم استرجاع النسخة الاحتياطية في مجلد منفصل"};
       const AR_EXTRA = {
         "Match system": "مطابقة النظام",
+        "Start with desktop": "التشغيل مع سطح المكتب",
+        "Starts with desktop": "يبدأ مع سطح المكتب",
+        "Motion and startup": "الحركة والتشغيل",
+        "Puts the floating island back at the top of the screen.": "يعيد الجزيرة العائمة إلى أعلى الشاشة.",
+        "Quit Muisland?": "إنهاء Muisland؟",
+        "Quit": "إنهاء",
+        "The floating island closes and usage stops updating. Your saved accounts stay on this computer.": "تُغلق الجزيرة العائمة ويتوقف تحديث الاستخدام. تبقى حساباتك المحفوظة على هذا الجهاز.",
         "Automatic": "تلقائي",
         "Start with desktop": "التشغيل مع سطح المكتب",
         "Back": "رجوع",
@@ -1695,6 +1753,10 @@
         save: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>`,
         trash: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>`,
         restore: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg>`,
+        chevron: `<svg class="flip" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>`,
+        gearSmall: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>`,
+        shield: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 2.8v5.4c0 4.4-3 7.8-7 9.8-4-2-7-5.4-7-9.8V5.8z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>`,
+        power: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v8M7.1 6.6a7 7 0 1 0 9.8 0"/></svg>`,
         info: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>`,
         bolt: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>`,
         lock: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
@@ -1755,7 +1817,15 @@
       }
 
       // Menu pages ---------------------------------------------------------
-      const DEPTH = { home: 0, settings: 1, edit: 1, confirm: 2, notice: 2, auto: 2 };
+      const DEPTH = { home: 0, settings: 1, edit: 1, section: 2, confirm: 2, notice: 2, auto: 2 };
+      let section = 0;
+      const CATEGORIES = [
+        ["Appearance & language", "palette"],
+        ["Floating island", "ring"],
+        ["Alerts & auto-switch", "bell"],
+        ["General", "gearSmall"],
+        ["Backup & recovery", "shield"],
+      ];
       function head(title, back, extra = "") {
         return `<div class="page-head">${back ? `<button class="icon-btn back" data-back aria-label="${esc(tr("Back"))}">${ICON.back}</button>` : ""}<h1>${esc(title)}</h1>${extra}</div>`;
       }
@@ -1793,30 +1863,63 @@
         const bg = isAuto ? `linear-gradient(90deg,${t.bg} 50%,${l.bg} 50%)` : t.bg;
         return `<button class="tile ${data.theme === i ? "on" : ""}" data-set="theme" data-val="${i}" style="--tb:${bg};--tt:${isAuto ? "#9aa0b8" : t.text};--ta:${t.accent};--ta2:${t.accent2};--tl:${t.line}"><span class="sw"><i></i><span></span></span>${esc(name)}</button>`;
       }
+      function categorySummary(i) {
+        const s = S(), L = labels(), pct = (v) => pctText(Math.round((v ?? 0.8) * 100));
+        const t = data.theme >= AUTO ? tr("Match system") : arabic() ? THEMES[data.theme]?.arabic : THEMES[data.theme]?.name;
+        const lang = { auto: tr("Automatic"), en: "English", ar: "العربية" }[s.language || "auto"];
+        const off = tr("Off");
+        if (i === 0) return `${t} · ${lang}`;
+        if (i === 1) return [tr(s.circle ? "Circle" : "Pill"), s.circle_numbers ? { session: L.s, weekly: L.w, max: tr("Highest") }[s.circle_metric || "session"] : tr("Logo")].join(" · ");
+        if (i === 2) {
+          const parts = s.usage_alerts ? [`${L.s} ${pct(s.session_threshold)}`, `${L.w} ${pct(s.weekly_threshold)}`] : [];
+          if (s.auto_switch) parts.push(tr("Auto-switch on"));
+          return parts.join(" · ") || off;
+        }
+        if (i === 3) {
+          const parts = [];
+          if (data.desktop?.autostart) parts.push(tr("Starts with desktop"));
+          if (s.reduced_motion) parts.push(tr("No animations"));
+          return parts.join(" · ") || tr("Motion and startup");
+        }
+        if (data.provider !== "claude") return tr("Undo the last account switch");
+        return tr(s.protect_local ? "Backup before switching: on" : "Backup before switching: off");
+      }
       function settingsPage() {
+        const rows = CATEGORIES.map(([title, icon], i) => `<button class="cat" data-section="${i}"><span class="cat-icon">${ICON[icon]}</span><span class="lbl"><b class="ellipsis">${tr(title)}</b><small class="ellipsis">${esc(categorySummary(i))}</small></span><span class="cat-go">${ICON.chevron}</span></button>`).join("");
+        return head(tr("Settings"), true) + `<div class="scroll" data-key="scroll-settings"><div class="stagger">${rows}</div><button class="btn wide danger" data-op="quit" style="margin-top:6px">${ICON.power.replace('width="30" height="30"', 'width="18" height="18"')}${tr("Quit Muisland")}</button></div>`;
+      }
+      function sectionPage() {
         const s = S(), L = labels();
-        let h = `<div class="sec">${tr("APPEARANCE")}</div><div class="themes">${[...THEMES.keys(), AUTO].map(themeTile).join("")}</div>`;
-        h += `<div class="sec">${tr("FLOATING ISLAND")}</div>`;
-        h += `<div class="row col"><div class="lbl"><b>${tr("Style")}</b></div>${seg("circle", [[true, tr("Circle")], [false, tr("Pill")]], !!s.circle)}</div>`;
-        h += `<div class="row col"><div class="lbl"><b>${tr("Center shows")}</b></div>${seg("circle_numbers", [[true, tr("Percentage")], [false, tr("Logo")]], !!s.circle_numbers)}</div>`;
-        h += `<div class="row col"><div class="lbl"><b>${tr("Percentage of")}</b></div>${seg("circle_metric", [["session", L.s], ["weekly", L.w], ["max", tr("Highest")]], s.circle_metric || "session")}</div>`;
-        h += slider("float_scale", tr("Island size"), 0.6, 1.8, 1) + slider("bubble_scale", tr("Hover card size"), 0.85, 1.6, 1) + slider("menu_scale", tr("Menu size"), 0.75, 1.6, 1);
-        h += `<div class="sec">${tr("LANGUAGE")}</div><div class="row col">${seg("language", [["auto", tr("Automatic")], ["en", "English"], ["ar", "العربية"]], s.language || "auto")}</div>`;
-        h += `<div class="sec">${tr("BEHAVIOR")}</div><div class="row"><div class="lbl"><b>${tr("Reduce motion")}</b></div>${toggle("reduced_motion")}</div>`;
-        if (native)
-          h += `<div class="row"><div class="lbl"><b>${tr("Start with desktop")}</b><small>${esc(data.desktop?.backend || "Linux")}</small></div><button class="tog ${data.desktop?.autostart ? "on" : ""}" role="switch" aria-checked="${!!data.desktop?.autostart}" data-autostart></button></div>`;
-        if (native || demo) h += `<button class="btn wide" data-reset-position>${tr("Reset position")}</button>`;
-        h += `<div class="sec">${tr("ALERTS & AUTO-SWITCH")}</div><div class="row"><div class="lbl"><b>${tr("Notify at usage thresholds")}</b></div>${toggle("usage_alerts")}</div>`;
-        h += slider("session_threshold", tr("Session limit"), 0.05, 1, 0.8) + slider("weekly_threshold", tr("Weekly limit"), 0.05, 1, 0.8);
-        h += `<div class="row"><div class="lbl"><b>${tr("Auto-switch at these limits")}</b></div>${toggle("auto_switch")}</div><div class="row"><div class="lbl"><b>${tr("Ask first when work may be open")}</b></div>${toggle("pause_for_work")}</div>`;
-        h += `<p class="hint">${tr("Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed.")}</p>`;
-        h += `<div class="sec">${tr("SAFETY & RECOVERY")}</div>`;
-        if (data.provider === "claude")
-          h += `<div class="row"><div class="lbl"><b>${tr("Back up local data before switch")}</b><small>${tr("Encrypted checkpoint while Claude is closed")}</small></div>${toggle("protect_local")}</div>`;
-        h += `<button class="btn wide" data-op="rollback">${tr("Restore previous sign-in")}</button>`;
-        if (data.provider === "claude") h += `<button class="btn wide" data-op="recover">${tr("Recover local backup to folder")}</button>`;
-        h += `<button class="btn wide danger" data-quit>${tr("Quit Muisland")}</button>`;
-        return head(tr("Settings"), true) + `<div class="scroll" data-key="scroll-settings">${h}</div>`;
+        let h = "";
+        if (section === 0) {
+          h += `<div class="sec">${tr("THEME")}</div><div class="themes">${[...THEMES.keys(), AUTO].map(themeTile).join("")}</div>`;
+          h += `<div class="sec">${tr("LANGUAGE")}</div><div class="row col">${seg("language", [["auto", tr("Automatic")], ["en", "English"], ["ar", "العربية"]], s.language || "auto")}</div>`;
+        } else if (section === 1) {
+          h += `<div class="sec">${tr("LOOK")}</div>`;
+          h += `<div class="row col"><div class="lbl"><b>${tr("Style")}</b></div>${seg("circle", [[true, tr("Circle")], [false, tr("Pill")]], !!s.circle)}</div>`;
+          h += `<div class="row col"><div class="lbl"><b>${tr("Inside the circle")}</b></div>${seg("circle_numbers", [[true, tr("Percentage")], [false, tr("Logo")]], !!s.circle_numbers)}</div>`;
+          h += `<div class="row col"><div class="lbl"><b>${tr("Show usage for")}</b></div>${seg("circle_metric", [["session", L.s], ["weekly", L.w], ["max", tr("Highest")]], s.circle_metric || "session")}</div>`;
+          h += `<div class="sec">${tr("SIZE")}</div>`;
+          h += slider("float_scale", tr("Island size"), 0.6, 1.8, 1) + slider("bubble_scale", tr("Hover card size"), 0.85, 1.6, 1) + slider("menu_scale", tr("Panel size"), 0.75, 1.6, 1);
+          if (native || demo) h += `<button class="btn wide" data-reset-position>${tr("Reset position")}</button><p class="hint">${tr("Puts the floating island back at the top of the screen.")}</p>`;
+        } else if (section === 2) {
+          h += `<div class="row"><div class="lbl"><b>${tr("Usage alerts")}</b><small>${tr("Notify when an account reaches the limits below")}</small></div>${toggle("usage_alerts")}</div>`;
+          h += slider("session_threshold", tr("{label} alert at", { label: L.s }), 0.05, 1, 0.8) + slider("weekly_threshold", tr("{label} alert at", { label: L.w }), 0.05, 1, 0.8);
+          h += `<div class="row"><div class="lbl"><b>${tr("Switch accounts automatically")}</b><small>${tr("Moves to the saved account with the most room")}</small></div>${toggle("auto_switch")}</div><div class="row"><div class="lbl"><b>${tr("Ask before switching if Claude may be busy")}</b></div>${toggle("pause_for_work")}</div>`;
+          h += `<p class="hint">${tr("Auto-switch waits 15 seconds. Cancel or close the Island to stop it. Open apps may have running tasks; idle detection is not guaranteed.")}</p>`;
+        } else if (section === 3) {
+          if (native)
+            h += `<div class="row"><div class="lbl"><b>${tr("Start with desktop")}</b><small>${esc(data.desktop?.backend || "Linux")}</small></div><button class="tog ${data.desktop?.autostart ? "on" : ""}" role="switch" aria-checked="${!!data.desktop?.autostart}" data-autostart></button></div>`;
+          h += `<div class="row"><div class="lbl"><b>${tr("Remove animations")}</b><small>${tr("Changes appear instantly")}</small></div>${toggle("reduced_motion")}</div>`;
+        } else {
+          if (data.provider === "claude") {
+            h += `<div class="row"><div class="lbl"><b>${tr("Back up Claude's data before switching")}</b><small>${tr("Encrypted chats, sessions and settings; caches skipped")}</small></div>${toggle("protect_local")}</div>`;
+            h += `<p class="hint">${tr("The latest {n} are kept; older ones are deleted automatically.", { n: num(3) })}</p>`;
+            h += `<button class="btn wide" data-op="recover">${tr("Restore latest backup to a folder")}</button>`;
+          } else h += `<p class="hint">${tr("Local data backup is for Claude. Open the Claude tab to change it.")}</p>`;
+          h += `<div class="sec">${tr("SIGN-IN")}</div><button class="btn wide" data-op="rollback">${tr("Undo last account switch")}</button><p class="hint">${tr("Puts back the sign-in that was active before the last switch.")}</p>`;
+        }
+        return head(tr(CATEGORIES[section][0]), true) + `<div class="scroll" data-key="scroll-section-${section}">${h}</div>`;
       }
       function editPage() {
         const a = data.accounts.find((x) => x.slot === editing);
@@ -1834,16 +1937,18 @@
           remove: "Remove this account?",
           rollback: "Restore previous sign-in?",
           recover: "Recover local backup?",
+          quit: "Quit Muisland?",
         }[act];
         let copy;
-        if (act === "remove") copy = tr("The encrypted sign-in is archived locally. Your cloud chats and files are not deleted.");
+        if (act === "quit") copy = tr("The floating island closes and usage stops updating. Your saved accounts stay on this computer.");
+        else if (act === "remove") copy = tr("The encrypted sign-in is archived locally. Your cloud chats and files are not deleted.");
         else if (data.provider === "codex") copy = tr("This changes only the Codex file sign-in cache. New CLI sessions use it; restart open Codex sessions to reload. The Desktop host may retain its own login.");
         else if (act === "recover") copy = tr("Decrypt the latest local checkpoint into a separate folder. Claude’s live files will not be overwritten.");
         else if (addingAnother) copy = tr("Claude is signed in as {name}, which is already saved. Claude will close and reopen at its sign-in screen so you can sign in to a different account, then Save again. {name} is not signed out. Local tasks may stop and unsaved work may be lost.", { name: addingAnother.name });
         else copy = tr("Claude will close normally and reopen. Local tasks may stop and unsaved work may be lost. Nothing changes until you confirm.");
-        const icon = { save: ICON.save, switch: ICON.swap, remove: ICON.trash, rollback: ICON.restore, recover: ICON.restore }[act] || ICON.info;
-        const tone = act === "remove" ? "danger" : "";
-        return `<div class="dialog"><div class="badge ${tone}">${icon}</div><h2>${tr(title)}</h2>${a ? `<p class="name">${esc(a.name)}</p>` : `<p class="name"></p>`}<p class="copy">${esc(copy)}</p></div><div class="actions"><button class="btn" data-cancel>${tr("Cancel")}</button><button class="btn ${act === "remove" ? "danger" : "primary"}" data-confirm ${data.busy ? "disabled" : ""}>${tr("Confirm")}</button></div>`;
+        const icon = { save: ICON.save, switch: ICON.swap, remove: ICON.trash, rollback: ICON.restore, recover: ICON.restore, quit: ICON.power }[act] || ICON.info;
+        const tone = act === "remove" || act === "quit" ? "danger" : "";
+        return `<div class="dialog"><div class="badge ${tone}">${icon}</div><h2>${tr(title)}</h2>${a ? `<p class="name">${esc(a.name)}</p>` : `<p class="name"></p>`}<p class="copy">${esc(copy)}</p></div><div class="actions"><button class="btn" data-cancel>${tr("Cancel")}</button><button class="btn ${tone === "danger" ? "danger" : "primary"}" data-confirm ${data.busy ? "disabled" : ""}>${tr(act === "quit" ? "Quit" : "Confirm")}</button></div>`;
       }
       function noticePage() {
         const err = data.error;
@@ -1862,7 +1967,7 @@
           if (html) return html;
           view = "home";
         }
-        return { home: homePage, settings: settingsPage, confirm: confirmPage, notice: noticePage, auto: autoPage }[view]();
+        return { home: homePage, settings: settingsPage, section: sectionPage, confirm: confirmPage, notice: noticePage, auto: autoPage }[view]();
       }
       function footHTML() {
         const a = active();
@@ -1878,8 +1983,8 @@
         const n = data.accounts.length;
         const sub = `${data.provider === "codex" ? "Codex" : "Claude"} · ${n === 1 ? tr("1 account") : tr("{n} accounts", { n: num(n) })}`;
         const pi = data.provider === "codex" ? 1 : 0;
-        const pageKey = `${view}-${view === "home" ? data.provider : view === "edit" ? editing : view === "confirm" ? pending?.action : ""}`;
-        return `<section class="surface"><header class="header"><span class="logo">${ICON.logo(22)}</span><span class="brand"><b>Muisland</b><small>${esc(sub)}</small></span><button class="icon-btn ${view === "settings" ? "on" : ""}" data-prefs aria-label="${esc(tr("Settings"))}">${ICON.gear}</button><button class="icon-btn" data-close aria-label="${esc(tr("Collapse"))}">${ICON.close}</button></header><nav class="tabs" style="--n:2;--i:${pi}"><i></i>${["claude", "codex"].map((p) => `<button class="${data.provider === p ? "on" : ""}" data-provider="${p}" style="--c:${PROVIDER_COLOR[p]}"><span class="pdot"></span>${p === "claude" ? "Claude" : "Codex"}</button>`).join("")}</nav><div class="pages"><div class="page ${data.busy ? "busy" : ""}" data-key="page-${pageKey}" data-depth="${DEPTH[view] ?? 0}" data-prov="${pi}">${pageHTML()}</div></div>${footHTML()}</section>`;
+        const pageKey = `${view}-${view === "home" ? data.provider : view === "edit" ? editing : view === "confirm" ? pending?.action : view === "section" ? section : ""}`;
+        return `<section class="surface"><header class="header"><span class="logo">${ICON.logo(22)}</span><span class="brand"><b>Muisland</b><small>${esc(sub)}</small></span><button class="icon-btn ${view === "settings" || view === "section" ? "on" : ""}" data-prefs aria-label="${esc(tr("Settings"))}">${ICON.gear}</button><button class="icon-btn" data-close aria-label="${esc(tr("Collapse"))}">${ICON.close}</button></header><nav class="tabs" style="--n:2;--i:${pi}"><i></i>${["claude", "codex"].map((p) => `<button class="${data.provider === p ? "on" : ""}" data-provider="${p}" style="--c:${PROVIDER_COLOR[p]}"><span class="pdot"></span>${p === "claude" ? "Claude" : "Codex"}</button>`).join("")}</nav><div class="pages"><div class="page ${data.busy ? "busy" : ""}" data-key="page-${pageKey}" data-depth="${DEPTH[view] ?? 0}" data-prov="${pi}">${pageHTML()}</div></div>${footHTML()}</section>`;
       }
 
       // ---------------------------------------------------------------- DOM morphing
@@ -2088,7 +2193,8 @@
           if (changed) go("home");
           return;
         }
-        if ("prefs" in d) return go(view === "settings" ? "home" : "settings");
+        if ("prefs" in d) return go(view === "settings" || view === "section" ? "home" : "settings");
+        if (d.section) return ((section = +d.section), go("section"));
         if ("close" in d) return invoke("view", { view: "float" });
         if ("add" in d) {
           const added = await command("add");
@@ -2117,12 +2223,19 @@
         if (d.op) return confirmAction(d.op);
         if ("back" in d || "cancel" in d) {
           if (view === "confirm" && pending?.action === "remove" && data.accounts.some((a) => a.slot === pending.slot)) return ((editing = pending.slot), go("edit"));
+          if (view === "confirm" && pending?.action === "quit") return go("settings");
+          if (view === "confirm" && ["rollback", "recover"].includes(pending?.action)) return go("section");
+          if (view === "section") return go("settings");
           if (view === "settings" || view === "notice") return go("home");
           await command("discard");
           return go("home");
         }
         if ("confirm" in d) {
           const op = pending;
+          if (op.action === "quit") {
+            go("settings");
+            return invoke("quit");
+          }
           data.busy = true;
           render();
           const result = await command(op.action, { slot: op.slot, confirmed: true });
@@ -2170,6 +2283,7 @@
           if (demo && !demoState.open) return;
           if (view === "home") return invoke("view", { view: "float" });
           if (view === "auto") return command("auto_cancel").then(() => go("home"));
+          if (view === "section") return go("settings");
           if (view === "settings" || view === "notice") return go("home");
           command("discard");
           return go("home");
