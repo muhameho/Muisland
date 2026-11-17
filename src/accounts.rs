@@ -28,6 +28,8 @@ pub struct Settings {
     pub protect_local: bool,
     /// Copy Claude's Code-tab session list between accounts when switching.
     pub share_sessions: bool,
+    /// Folder of the Cowork task being handed off between accounts.
+    pub handoff_folder: Option<String>,
     pub menu_scale: f32,
     pub float_scale: f32,
     pub bubble_scale: f32,
@@ -67,6 +69,7 @@ impl Default for Settings {
             theme: crate::theme::DEFAULT,
             protect_local: false,
             share_sessions: true,
+            handoff_folder: None,
             menu_scale: 1.0,
             float_scale: 1.0,
             bubble_scale: 1.0,
@@ -138,6 +141,10 @@ impl Settings {
         }
         result.protect_local = v["protect_local"].as_bool().unwrap_or(false);
         result.share_sessions = v["share_sessions"].as_bool().unwrap_or(true);
+        result.handoff_folder = v["handoff_folder"]
+            .as_str()
+            .filter(|f| !f.is_empty() && f.len() < 1024)
+            .map(String::from);
         let legacy = v["scale"].as_f64().filter(|n| n.is_finite()).unwrap_or(1.0);
         result.menu_scale = v["menu_scale"]
             .as_f64()
@@ -219,7 +226,7 @@ impl Settings {
         } else {
             (&self.other_accounts, &self.accounts)
         };
-        json!({"version":4,"accounts":rows(claude),"codex_accounts":rows(codex),"provider":self.provider,"theme":self.theme,"protect_local":self.protect_local,"share_sessions":self.share_sessions,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion,"circle_numbers":self.circle_numbers,"usage_alerts":self.usage_alerts,"session_threshold":self.session_threshold,"weekly_threshold":self.weekly_threshold,"auto_switch":self.auto_switch,"pause_for_work":self.pause_for_work,"language":self.language,"circle_metric":self.circle_metric,"tray":self.tray,"hotkey":self.hotkey,"show_island":self.show_island,"position":self.position.map(|(x,y)|json!([x,y]))})
+        json!({"version":4,"accounts":rows(claude),"codex_accounts":rows(codex),"provider":self.provider,"theme":self.theme,"protect_local":self.protect_local,"share_sessions":self.share_sessions,"handoff_folder":self.handoff_folder,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion,"circle_numbers":self.circle_numbers,"usage_alerts":self.usage_alerts,"session_threshold":self.session_threshold,"weekly_threshold":self.weekly_threshold,"auto_switch":self.auto_switch,"pause_for_work":self.pause_for_work,"language":self.language,"circle_metric":self.circle_metric,"tray":self.tray,"hotkey":self.hotkey,"show_island":self.show_island,"position":self.position.map(|(x,y)|json!([x,y]))})
     }
     pub fn select_provider(&mut self, provider: usize) {
         let provider = provider.min(1);

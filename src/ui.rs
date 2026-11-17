@@ -208,6 +208,7 @@ pub enum Icon {
     Power,
     Chevron,
     Copy,
+    Folder,
     Palette,
     Island,
     Bell,
@@ -307,6 +308,12 @@ fn icon(c: &C, kind: Icon, cx: f32, cy: f32, size: f32, col: Color, spin: f32) {
                 false,
             );
         }
+        Icon::Folder => c.polyline(
+            &[p(-7., -5.), p(-2.5, -5.), p(-0.8, -3.), p(7., -3.), p(7., 5.5), p(-7., 5.5)],
+            w,
+            col,
+            true,
+        ),
         Icon::Chevron => c.polyline(&[p(-2.5, -6.), p(3.5, 0.), p(-2.5, 6.)], w, col, false),
         Icon::Palette => {
             c.ring(cx, cy, 7.5 * k, w, col);
@@ -1306,6 +1313,12 @@ fn draw_view(c: &mut C, s: &State, m: &mut Mem, view: &View) {
         }
     }
 }
+fn folder_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
 /// "Moving a Cowork task?" — sits above the switch buttons for Claude.
 fn handoff_box(c: &mut C, s: &State, m: &mut Mem) {
     if s.settings.provider != 0 {
@@ -1323,29 +1336,54 @@ fn handoff_box(c: &mut C, s: &State, m: &mut Mem) {
         t.text,
         Align::Start,
     );
-    c.paragraph(
-        s.tr(if s.handoff_copied {
-            "Sent it in Cowork? When HANDOFF.md is saved, switch. Afterwards Muisland gives you the request to continue."
-        } else {
-            "Before switching, copy this request and send it in Cowork. It saves a HANDOFF.md summary in your folder."
-        }),
-        r(b.x + 14., b.y + 36., b.w - 28., 40.),
-        font(11.5, 400),
-        t.muted,
-    );
+    let names: Vec<String> = s.handoff_folders.iter().map(|f| folder_name(f)).collect();
+    let (line, tone) = if !s.handoff_copied {
+        (
+            s.tr("Copy this request and send it in every Cowork task you are moving. Each one saves HANDOFF.md in its folder.").to_string(),
+            t.muted,
+        )
+    } else if names.is_empty() {
+        (
+            s.tr("Waiting for HANDOFF.md… Switch once Cowork has saved it.").to_string(),
+            t.muted,
+        )
+    } else {
+        (
+            s.tr("Found in: {names}. Switch when every task has saved it.")
+                .replace("{names}", &names.join(", ")),
+            t.good,
+        )
+    };
+    c.paragraph(&line, r(b.x + 14., b.y + 36., b.w - 28., 40.), font(11.5, 450), tone);
+    let half = (b.w - 24. - 8.) / 2.;
     button(
         c,
         s,
         m,
-        r(b.x + 12., b.bottom() - 42., b.w - 24., 32.),
+        r(b.x + 12., b.bottom() - 42., half, 32.),
         Action::CopyHandoff,
         s.tr(if s.handoff_copied {
-            "Copy request again"
+            "Copy again"
         } else {
-            "Copy handoff request"
+            "Copy request"
         }),
         Style::Secondary,
         Some(Icon::Copy),
+    );
+    let folder = match s.handoff_folders.len() {
+        0 => s.tr("Choose folder").to_string(),
+        1 => folder_name(&s.handoff_folders[0]),
+        n => s.tr("{n} projects").replace("{n}", &n.to_string()),
+    };
+    button(
+        c,
+        s,
+        m,
+        r(b.x + 20. + half, b.bottom() - 42., half, 32.),
+        Action::PickFolder,
+        &folder,
+        Style::Secondary,
+        Some(Icon::Folder),
     );
 }
 fn confirm_buttons(c: &mut C, s: &State, m: &mut Mem, label: &str, a: Action, danger: bool) {
@@ -1476,8 +1514,44 @@ fn home(c: &mut C, s: &State, m: &mut Mem) {
         Some(Icon::Plus),
     );
     let mut top = CT + 44.;
-    if s.handoff_ready && s.settings.provider == 0 {
-        let b = r(PAD, top, PW - 2. * PAD, 104.);
+    if s.handoff_ready && s.settings.provider == 0 && !s.handoff_folders.is_empty() {
+        let shown = s.handoff_folders.len().min(3);
+        let b = r(PAD, top, PW - 2. * PAD, 82. + shown as f32 * 40.);
+        c.fill(b, 16., t.accent.alpha(0.09));
+        c.stroke(b, 16., 1., t.accent.alpha(0.3));
+        icon(c, Icon::Copy, b.x + 22., b.y + 22., 16., t.accent, 0.);
+        c.text(
+            s.tr("Continue your Cowork task"),
+            r(b.x + 40., b.y + 11., b.w - 80., 22.),
+            font(13.5, 650),
+            t.text,
+            Align::Start,
+        );
+        icon_button(c, s, m, r(b.right() - 40., b.y + 6., 32., 32.), Action::DismissHandoff, Icon::Close, 0., 0.);
+        c.paragraph(
+            &s.tr("The request is copied. In each Cowork window paste it with Ctrl+V, then press Enter.").replace("Ctrl+V", "Ctrl\u{2060}+\u{2060}V"),
+            r(b.x + 14., b.y + 34., b.w - 28., 40.),
+            font(11.5, 400),
+            t.muted,
+        );
+        for (k, folder) in s.handoff_folders.iter().take(shown).enumerate() {
+            let y = b.y + 76. + k as f32 * 40.;
+            icon(c, Icon::Folder, b.x + 24., y + 16., 15., t.muted, 0.);
+            c.text(&folder_name(folder), r(b.x + 42., y + 6., b.w - 160., 20.), font(13., 600), t.text, Align::Start);
+            button(
+                c,
+                s,
+                m,
+                r(b.right() - 12. - 104., y, 104., 32.),
+                Action::OpenProject(k),
+                s.tr(if k == 0 { "Open again" } else { "Open" }),
+                if k == 0 { Style::Secondary } else { Style::Primary },
+                None,
+            );
+        }
+        top += b.h + 10.;
+    } else if s.handoff_ready && s.settings.provider == 0 {
+        let b = r(PAD, top, PW - 2. * PAD, 116.);
         c.fill(b, 16., t.accent.alpha(0.09));
         c.stroke(b, 16., 1., t.accent.alpha(0.3));
         icon(c, Icon::Copy, b.x + 22., b.y + 22., 16., t.accent, 0.);
@@ -1498,21 +1572,31 @@ fn home(c: &mut C, s: &State, m: &mut Mem) {
             0.,
             0.,
         );
-        c.text(
-            s.tr("Open Cowork on the same folder, then paste this request."),
-            r(b.x + 14., b.y + 36., b.w - 28., 20.),
+        c.paragraph(
+            &s.tr("Cowork is open and the request is copied. Paste it with Ctrl+V, then press Enter.").replace("Ctrl+V", "Ctrl\u{2060}+\u{2060}V"),
+            r(b.x + 14., b.y + 34., b.w - 28., 40.),
             font(11.5, 400),
             t.muted,
-            Align::Start,
+        );
+        let half = (b.w - 24. - 8.) / 2.;
+        button(
+            c,
+            s,
+            m,
+            r(b.x + 12., b.bottom() - 42., half, 32.),
+            Action::OpenCowork,
+            s.tr("Open again"),
+            Style::Primary,
+            None,
         );
         button(
             c,
             s,
             m,
-            r(b.x + 12., b.bottom() - 42., b.w - 24., 32.),
+            r(b.x + 20. + half, b.bottom() - 42., half, 32.),
             Action::CopyContinue,
-            s.tr("Copy continue request"),
-            Style::Primary,
+            s.tr("Copy request"),
+            Style::Secondary,
             Some(Icon::Copy),
         );
         top += b.h + 10.;

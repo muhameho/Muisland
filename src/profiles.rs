@@ -182,6 +182,14 @@ impl LaunchTarget {
         Ok(())
     }
 }
+/// Opens a `claude://` link; when Claude is closed this also starts it.
+pub fn open_link(url: &str) -> io::Result<()> {
+    if !url.starts_with("claude://") {
+        return Err(io::Error::other("Not a Claude link"));
+    }
+    Command::new("explorer.exe").arg(url).spawn()?;
+    Ok(())
+}
 fn is_desktop_executable(path: &Path) -> bool {
     let p = path.to_string_lossy().to_lowercase();
     ![

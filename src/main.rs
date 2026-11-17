@@ -12,6 +12,8 @@ mod codex;
 #[cfg(windows)]
 mod gfx;
 #[cfg(windows)]
+mod handoff;
+#[cfg(windows)]
 mod i18n;
 #[cfg(windows)]
 mod polling;

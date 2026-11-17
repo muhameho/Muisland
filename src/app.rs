@@ -120,6 +120,12 @@ pub enum Action {
     /// Copies the request that continues from HANDOFF.md after a switch.
     CopyContinue,
     DismissHandoff,
+    /// Picks the folder the Cowork task works in.
+    PickFolder,
+    /// Opens a new Cowork session (folder from the manual choice).
+    OpenCowork,
+    /// Opens a new Cowork session in the n-th project that saved HANDOFF.md.
+    OpenProject(usize),
     Remove,
     RemoveConfirm,
     Rollback,
@@ -221,6 +227,13 @@ pub struct State {
     pub handoff_copied: bool,
     /// …and the switch finished, so the continue banner is shown.
     pub handoff_ready: bool,
+    /// The folder dialog is open: losing focus must not collapse the panel.
+    picking: bool,
+    folder_rx: Option<mpsc::Receiver<Option<String>>>,
+    /// Project folders where HANDOFF.md was saved since the request was copied.
+    pub handoff_folders: Vec<String>,
+    handoff_since: Option<std::time::SystemTime>,
+    handoff_rx: Option<mpsc::Receiver<std::path::PathBuf>>,
     /// When the panel was last opened from the tray, shortcut or hover card.
     opened_at: f32,
     hwnd: HWND,
@@ -716,6 +729,13 @@ pub fn begin(s: &mut State, op: Op, confirmed: bool) {
     };
     let protect = s.settings.protect_local;
     let share = s.settings.share_sessions;
+    let handoff = (s.settings.provider == 0 && s.handoff_copied).then(|| {
+        let folder = s
+            .handoff_folders
+            .first()
+            .or(s.settings.handoff_folder.as_ref());
+        cowork_link(None, folder.map(String::as_str))
+    });
     let provider = s.settings.provider;
     let slot = match op {
         Op::Save(i) | Op::Switch(i) => s.settings.accounts[i].slot,
@@ -854,7 +874,14 @@ pub fn begin(s: &mut State, op: Op, confirmed: bool) {
                 }
                 Op::Switch(_) => {
                     let switched = profiles::switch(slot, protect, share);
-                    let reopened = launch.open();
+                    // Starting Claude through the link opens the Cowork handoff
+                    // directly (a cold start, which also commits the prefilled text).
+                    let reopened = match handoff.as_deref() {
+                        Some(link) if switched.is_ok() => {
+                            profiles::open_link(link).or_else(|_| launch.open())
+                        }
+                        _ => launch.open(),
+                    };
                     let shared = switched.map_err(|e| e.to_string())?;
                     reopened.map_err(|_| {
                         tr("Account switched, but Claude could not reopen. Open Claude manually.")
@@ -1374,6 +1401,11 @@ pub fn activate(s: &mut State, a: Action) {
         Action::CopyHandoff => {
             let text = s.tr(HANDOFF_REQUEST);
             copy_text(s, text);
+            if !s.handoff_copied {
+                s.handoff_folders.clear();
+                s.handoff_since = Some(std::time::SystemTime::now());
+            }
+            watch_handoffs(s);
             s.handoff_copied = true;
             let m = s.tr("Copied · paste it in Cowork and wait for HANDOFF.md");
             status(s, m, false);
@@ -1386,9 +1418,37 @@ pub fn activate(s: &mut State, a: Action) {
             let m = s.tr("Copied · paste it in Cowork, in the same folder");
             status(s, m, false);
         }
+        Action::PickFolder => pick_folder(s),
+        Action::OpenProject(k) => {
+            let text = s.tr(CONTINUE_REQUEST);
+            copy_text(s, text);
+            if let Some(folder) = s.handoff_folders.get(k).cloned() {
+                if s.preview || profiles::open_link(&cowork_link(None, Some(&folder))).is_err() {
+                    let m = s.tr("Could not open Claude");
+                    status(s, m, !s.preview);
+                } else {
+                    collapse(s);
+                }
+            }
+        }
+        Action::OpenCowork => {
+            let text = s.tr(CONTINUE_REQUEST);
+            copy_text(s, text);
+            let link = cowork_link(None, s.settings.handoff_folder.as_deref());
+            if s.preview || profiles::open_link(&link).is_err() {
+                let m = s.tr("Could not open Claude");
+                status(s, m, !s.preview);
+            } else {
+                s.handoff_ready = false;
+                s.handoff_copied = false;
+                collapse(s);
+            }
+        }
         Action::DismissHandoff => {
             s.handoff_ready = false;
             s.handoff_copied = false;
+            s.handoff_folders.clear();
+            s.handoff_since = None;
         }
         Action::ShareSessions => {
             s.settings.share_sessions = !s.settings.share_sessions;
@@ -1449,8 +1509,124 @@ fn replace_selection(s: &mut State) {
     }
 }
 /// Sent to Cowork before a switch; the Arabic version comes from i18n.
-pub const HANDOFF_REQUEST: &str = "I'm about to switch Claude accounts and continue this task in a new Cowork session. Write a file named HANDOFF.md in the working folder with: the goal; what is done (which files changed and where); what is left, as a checklist; important decisions and constraints; and any commands or links needed to continue. Make it self-contained so a new session can continue without this conversation. Reply only once the file is saved.";
+pub const HANDOFF_REQUEST: &str = "I'm about to switch Claude accounts and continue this task in a new Cowork session. Save a file named HANDOFF.md at the top level of the folder you are working in (not in a subfolder), with: the goal; what is done (which files changed and where); what is left, as a checklist; important decisions and constraints; and any commands or links needed to continue. Make it self-contained so a new session can continue without this conversation. Reply only once the file is saved.";
 pub const CONTINUE_REQUEST: &str = "Read HANDOFF.md in this folder and continue the task from where it stopped. First summarize the current state in two lines, then carry on with the next unchecked item, and update HANDOFF.md as you finish items.";
+/// `claude://cowork/new?folder=…` opens a new Cowork session in that folder
+/// (Claude asks before using it). A `q=` message would be typed in too, but
+/// Claude marks every prompt that arrives from a link with a red caution
+/// note, so Muisland copies the request to the clipboard instead and leaves
+/// `message` empty in the app.
+pub fn cowork_link(message: Option<&str>, folder: Option<&str>) -> String {
+    fn enc(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() * 3);
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    out.push(b as char)
+                }
+                _ => out.push_str(&format!("%{b:02X}")),
+            }
+        }
+        out
+    }
+    let mut params = Vec::new();
+    if let Some(message) = message.filter(|m| !m.is_empty()) {
+        params.push(format!("q={}", enc(message)));
+    }
+    if let Some(folder) = folder.filter(|f| !f.is_empty()) {
+        params.push(format!("folder={}", enc(folder)));
+    }
+    if params.is_empty() {
+        "claude://cowork/new".into()
+    } else {
+        format!("claude://cowork/new?{}", params.join("&"))
+    }
+}
+const FOLDER_PICKED: u32 = WM_APP + 44;
+const HANDOFF_FOUND: u32 = WM_APP + 45;
+/// Starts one watcher per fixed drive (once per run); they report every
+/// HANDOFF.md written while a handoff is in progress.
+fn watch_handoffs(s: &mut State) {
+    if s.preview || s.hwnd.is_null() || s.handoff_rx.is_some() {
+        return;
+    }
+    let (tx, rx) = mpsc::channel();
+    s.handoff_rx = Some(rx);
+    let owner = s.hwnd as usize;
+    for drive in crate::handoff::fixed_drives() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            crate::handoff::watch(drive, tx, move || unsafe {
+                PostMessageW(owner as HWND, HANDOFF_FOUND, 0, 0);
+            })
+        });
+    }
+}
+/// Records project folders from the watchers while a handoff is in progress.
+pub fn collect_handoffs(s: &mut State) {
+    let Some(rx) = s.handoff_rx.as_ref() else { return };
+    let paths: Vec<std::path::PathBuf> = rx.try_iter().collect();
+    let Some(since) = s.handoff_since.filter(|_| s.handoff_copied) else {
+        return;
+    };
+    for path in paths {
+        let Some(folder) = crate::handoff::project_folder(&path) else { continue };
+        if !crate::handoff::fresh(&path, since) {
+            continue;
+        }
+        let folder = folder.to_string_lossy().into_owned();
+        if !s.handoff_folders.iter().any(|f| f.eq_ignore_ascii_case(&folder)) {
+            s.handoff_folders.push(folder);
+            s.dirty = true;
+        }
+    }
+}
+/// Shows the Windows folder dialog on its own thread so the panel keeps drawing.
+fn pick_folder(s: &mut State) {
+    if s.preview || s.hwnd.is_null() || s.picking {
+        return;
+    }
+    let (tx, rx) = mpsc::channel();
+    s.folder_rx = Some(rx);
+    s.picking = true;
+    let owner = s.hwnd as usize;
+    let title: Vec<u16> = s
+        .tr("Choose the folder your Cowork task works in")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    std::thread::spawn(move || {
+        use windows_sys::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
+        use windows_sys::Win32::UI::Shell::{SHBrowseForFolderW, SHGetPathFromIDListW, BROWSEINFOW};
+        let mut chosen = None;
+        unsafe {
+            CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as _);
+            let mut name = [0u16; 260];
+            let info = BROWSEINFOW {
+                hwndOwner: owner as HWND,
+                pidlRoot: std::ptr::null_mut(),
+                pszDisplayName: name.as_mut_ptr(),
+                lpszTitle: title.as_ptr(),
+                // Only file-system folders; resizable dialog with a "Make New Folder" button.
+                ulFlags: 0x0001 | 0x0040,
+                lpfn: None,
+                lParam: 0,
+                iImage: 0,
+            };
+            let pidl = SHBrowseForFolderW(&info);
+            if !pidl.is_null() {
+                let mut path = vec![0u16; 32768];
+                if SHGetPathFromIDListW(pidl, path.as_mut_ptr()) != 0 {
+                    let n = path.iter().position(|c| *c == 0).unwrap_or(0);
+                    chosen = Some(String::from_utf16_lossy(&path[..n]));
+                }
+                CoTaskMemFree(pidl as *const _);
+            }
+        }
+        let _ = tx.send(chosen.filter(|p| !p.is_empty()));
+        unsafe { PostMessageW(owner as HWND, FOLDER_PICKED, 0, 0) };
+    });
+}
 fn copy_text(s: &State, text: &str) {
     if s.preview || s.hwnd.is_null() {
         return;
@@ -1733,6 +1909,7 @@ unsafe fn frame(hwnd: HWND, s: &mut State) -> bool {
         && !s.drag
         && (s.open || s.peek)
         && !just_opened(s)
+        && !s.picking
         && under != hwnd
         && under != s.bubble
         && IsChild(hwnd, under) == 0
@@ -1878,6 +2055,8 @@ unsafe fn frame(hwnd: HWND, s: &mut State) -> bool {
                     s.active = Some(i);
                     if s.handoff_copied {
                         s.handoff_ready = true;
+                        let text = s.tr(CONTINUE_REQUEST);
+                        copy_text(s, text);
                     }
                 }
                 refresh_slots(s);
@@ -2179,6 +2358,25 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             open_panel(s, hwnd);
             0
         }
+        HANDOFF_FOUND => {
+            collect_handoffs(s);
+            0
+        }
+        FOLDER_PICKED => {
+            s.picking = false;
+            if let Some(Ok(Some(folder))) = s.folder_rx.take().map(|rx| rx.try_recv()) {
+                // A folder picked by hand also counts as a project of this handoff.
+                if s.handoff_copied && !s.handoff_folders.iter().any(|f| f.eq_ignore_ascii_case(&folder)) {
+                    s.handoff_folders.push(folder.clone());
+                }
+                s.settings.handoff_folder = Some(folder);
+                persist(s);
+            }
+            if s.open {
+                SetForegroundWindow(hwnd);
+            }
+            0
+        }
         REFOCUS => {
             if s.open {
                 SetForegroundWindow(hwnd);
@@ -2210,8 +2408,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_ACTIVATE if (wp as u32 & 0xFFFF) == WA_INACTIVE => {
-            if s.open && just_opened(s) {
-                PostMessageW(hwnd, REFOCUS, 0, 0);
+            if s.open && (just_opened(s) || s.picking) {
+                if !s.picking {
+                    PostMessageW(hwnd, REFOCUS, 0, 0);
+                }
                 return 0;
             }
             if s.open || s.peek {
@@ -2616,6 +2816,11 @@ pub fn initial(preview: bool, anchor: f32, top: i32) -> State {
         in_tray: false,
         handoff_copied: false,
         handoff_ready: false,
+        picking: false,
+        folder_rx: None,
+        handoff_folders: Vec::new(),
+        handoff_since: None,
+        handoff_rx: None,
         opened_at: -10.,
         hwnd: null_mut(),
         blink: 0,
@@ -2806,6 +3011,7 @@ pub fn export_previews(folder: &std::path::Path) -> std::io::Result<()> {
         ("handoff-switch", 4, 0),
         ("handoff-continue", 4, 0),
         ("handoff-arabic", 4, 1),
+        ("handoff-found", 4, 0),
         ("notice", 4, 0),
         ("empty", 4, 0),
         ("auto-switch", 4, 0),
@@ -2858,7 +3064,21 @@ pub fn export_previews(folder: &std::path::Path) -> std::io::Result<()> {
             "remove-account" => s.view = View::Remove(1, "Work".into()),
             "quit-confirm" => s.view = View::QuitConfirm,
             "handoff-switch" => s.view = View::SwitchConfirm(1),
-            "handoff-continue" => s.handoff_ready = true,
+            "handoff-continue" => {
+                s.handoff_ready = true;
+                s.handoff_folders = vec![
+                    "D:\\muhammad\\projects\\crm".into(),
+                    "D:\\Muisland".into(),
+                ];
+            }
+            "handoff-found" => {
+                s.handoff_copied = true;
+                s.handoff_folders = vec![
+                    "D:\\muhammad\\projects\\crm".into(),
+                    "D:\\Muisland".into(),
+                ];
+                s.view = View::SwitchConfirm(1);
+            }
             "handoff-arabic" => {
                 s.handoff_copied = true;
                 s.view = View::SwitchConfirm(1);
@@ -3526,6 +3746,40 @@ mod tests {
         assert_eq!(s.focus, Action::Cancel);
         activate(&mut s, Action::Cancel);
         assert!(matches!(s.view, View::Preferences));
+    }
+    #[test]
+    fn detected_handoff_folders_are_collected_once_and_cleared() {
+        let mut s = initial(true, 0., 0);
+        let dir = std::env::current_dir().unwrap().join("target").join(format!(
+            "handoff-collect-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tx, rx) = mpsc::channel();
+        s.handoff_rx = Some(rx);
+        activate(&mut s, Action::CopyHandoff);
+        std::fs::write(dir.join("HANDOFF.md"), b"x").unwrap();
+        tx.send(dir.join("HANDOFF.md")).unwrap();
+        tx.send(dir.join("handoff.md")).unwrap();
+        tx.send(dir.join("other.md")).unwrap();
+        collect_handoffs(&mut s);
+        assert_eq!(s.handoff_folders, vec![dir.to_string_lossy().into_owned()]);
+        activate(&mut s, Action::DismissHandoff);
+        assert!(s.handoff_folders.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn cowork_link_is_encoded_and_carries_the_folder() {
+        let link = cowork_link(Some("Read HANDOFF.md & go"), Some("D:\\My Work\\شغل"));
+        assert!(link.starts_with("claude://cowork/new?q=Read%20HANDOFF.md%20%26%20go&folder="));
+        assert!(link.ends_with("D%3A%5CMy%20Work%5C%D8%B4%D8%BA%D9%84"));
+        assert_eq!(cowork_link(Some("x"), None), "claude://cowork/new?q=x");
+        // What the app opens: the folder only, no prompt (so no caution note).
+        assert_eq!(cowork_link(None, Some("C:\\w")), "claude://cowork/new?folder=C%3A%5Cw");
+        assert_eq!(cowork_link(None, Some("")), "claude://cowork/new");
     }
     #[test]
     fn handoff_banner_appears_only_after_a_switch_that_followed_a_copy() {
