@@ -253,8 +253,12 @@ pub fn claude_launch_target() -> LaunchTarget {
             id: *mut u16,
         ) -> i32;
     }
-    if let Ok(processes) = desktop_processes() {
-        for (pid, path) in processes {
+    // The first running Desktop process decides how Claude is relaunched.
+    if let Some((pid, path)) = desktop_processes()
+        .ok()
+        .and_then(|processes| processes.into_iter().next())
+    {
+        {
             unsafe {
                 let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
                 if !process.is_null() {

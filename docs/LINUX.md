@@ -2,7 +2,7 @@
 
 Muisland runs as a desktop application on Linux, with the same Claude/Codex profiles, usage polling, confirmations, themes, and independent size controls. Windows keeps its native Win32 renderer.
 
-![Actual Linux GTK interface using offline sample accounts](images/linux.png)
+![Actual Linux WebKitGTK interface with sample accounts: accounts, settings, and the Arabic right-to-left layout in the Daylight theme](images/linux.png)
 
 ## Ubuntu / Debian package
 

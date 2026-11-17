@@ -58,6 +58,33 @@ class LinuxBackendTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.vault.write(name, b"x")
 
+    def test_redesign_migrates_once_to_circle_with_percentage(self):
+        self.vault.write_json(
+            "settings.bin", {"circle": False, "circle_numbers": False, "theme": 2}
+        )
+        service = backend.Service(vault=self.vault, network=False)
+        self.assertTrue(service.settings["circle"])
+        self.assertTrue(service.settings["circle_numbers"])
+        self.assertEqual(service.settings["theme"], 2)
+        service.handle("settings", {"circle": False, "circle_numbers": False})
+        loaded = backend.Service(vault=self.vault, network=False)
+        self.assertFalse(loaded.settings["circle"])
+        self.assertFalse(loaded.settings["circle_numbers"])
+
+    def test_new_appearance_settings_are_validated(self):
+        service = backend.Service(vault=self.vault, network=False)
+        self.assertEqual(service.settings["theme"], backend.THEME_DEFAULT)
+        service.handle(
+            "settings", {"theme": 10, "language": "ar", "circle_metric": "max"}
+        )
+        self.assertEqual(service.settings["theme"], 10)
+        self.assertEqual(service.settings["language"], "ar")
+        self.assertEqual(service.settings["circle_metric"], "max")
+        for bad in ({"language": "fr"}, {"circle_metric": "daily"}):
+            with self.assertRaises(ValueError):
+                service.handle("settings", bad)
+        self.assertEqual(service.settings["language"], "ar")
+
     def test_draft_not_saved_with_preferences_and_discarded(self):
         service = backend.Service(vault=self.vault, network=False)
         service.handle("add")
@@ -748,6 +775,20 @@ class LinuxBackendTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing its browser session"):
                 service.handle("switch", {"slot": 1, "confirmed": True})
             close.assert_not_called()
+
+
+class InterfaceTests(unittest.TestCase):
+    def test_public_demo_is_the_linux_interface(self):
+        here = Path(__file__).resolve().parent
+        demo = here.parent / "demo" / "index.html"
+        if not demo.exists():
+            self.skipTest("demo folder not present (container build)")
+        normal = lambda path: path.read_bytes().replace(b"\r\n", b"\n")
+        self.assertEqual(
+            normal(demo),
+            normal(here / "island.html"),
+            "copy linux/island.html to demo/index.html",
+        )
 
 
 if __name__ == "__main__":

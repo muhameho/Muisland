@@ -18,34 +18,48 @@ All images use invented accounts and offline sample data. Click an image to view
 
 ### In motion
 
-![Illustrated Muisland hover, opening, and collapse animation](docs/images/interaction.gif)
+![Muisland hover, opening, settings and collapse animation](docs/images/interaction.gif)
 
-An illustrated motion preview built from the native app's sample renders. For hands-on clicks, dragging, and settings, use the [interactive demo](#interactive-demo).
+Rendered frame by frame by the Windows app itself (`--render-motion`) using the same springs as the live window: the circle morphs into the panel, pages slide and fade, and the panel folds back into the circle.
 
 <details open>
-<summary><strong>Accounts — usage and account switching</strong></summary>
+<summary><strong>Accounts — usage and account switching, in English or Arabic</strong></summary>
 
-![Native account menu with named accounts and usage limits](docs/images/accounts.png)
+![Account panel in English and in mirrored right-to-left Arabic](docs/images/accounts.png)
 
-Each account has its own name, session quota, weekly quota, and reset countdowns. Switching asks for confirmation before changing the active session.
-
-</details>
-
-<details>
-<summary><strong>Circle — a separate, readable hover bubble</strong></summary>
-
-![Floating circle and independent account usage bubble](docs/images/circle-bubble.png)
-
-Keep the circle small and the bubble readable. The card chooses the available side of the screen and stays within the usable monitor area.
+Each account has an avatar, its session and weekly quotas with reset countdowns, and quick Save and details actions. Switching always asks for confirmation. The whole interface mirrors for Arabic.
 
 </details>
 
 <details>
-<summary><strong>Preferences — three independent sizes</strong></summary>
+<summary><strong>Floating island — circle with a live percentage, or a pill</strong></summary>
 
-![Preferences with independent menu, floating island, and hover bubble sizes](docs/images/preferences.png)
+![Circle islands showing usage percentages, the logo variant, and the pill](docs/images/islands.png)
 
-Windows and Linux share the same Preferences layout: a two-column theme grid, three independent size sliders, and rounded switch rows. Scroll within Preferences for recovery and other actions. The expanded menu, floating island, and hover bubble each have their own size control. Reduce motion makes transitions immediate.
+The default circle shows the session percentage inside two usage rings (session inside, weekly outside). Rings shift from the theme accent to amber and red as limits approach.
+
+</details>
+
+<details>
+<summary><strong>Hover card — readable at any island size</strong></summary>
+
+![Floating circle and its independent usage card](docs/images/circle-bubble.png)
+
+The card chooses the free side of the screen and stays within the usable monitor area.
+
+</details>
+
+<details>
+<summary><strong>Themes — ten looks, light and dark</strong></summary>
+
+![Daylight, Sunset and the theme picker](docs/images/themes.png)
+
+</details>
+
+<details>
+<summary><strong>Settings</strong></summary>
+
+![Settings: appearance, island, language, behavior, alerts and recovery](docs/images/preferences.png)
 
 </details>
 
@@ -53,7 +67,7 @@ Windows and Linux share the same Preferences layout: a two-column theme grid, th
 
 **[Open the live interactive playground](https://muhameho.github.io/Muisland/)** · [Download the standalone HTML](demo/index.html?raw=1) · [View its source](demo/index.html)
 
-The demo is hosted on GitHub Pages from `demo/`, separately from documentation. It opens directly in the browser; no download or setup is needed.
+The demo is hosted on GitHub Pages from `demo/`, separately from documentation. It opens directly in the browser; no download or setup is needed. It is the actual Linux interface (`demo/index.html` is a copy of `linux/island.html`) running on sample accounts: hover the circle for the usage card, click it to open the panel, drag it around, try the themes and Arabic, and move the usage sliders to watch the rings change colour.
 
 Use the live link, or save the HTML file and open it in a browser for offline use. It is self-contained: no build step, backend, external fonts, or Claude connection. If GitHub opens the source view, choose **Download raw file** and open the saved file.
 
@@ -67,7 +81,7 @@ Try these interactions:
 6. Open **Make it yours**, shrink the circle, and keep the bubble at 100%.
 7. Change the sample usage slider to see the progress bars and ring update.
 
-The demo is a browser simulation, not the Windows executable. All account operations are simulated and disappear on reset/reload. GitHub READMEs do not execute the demo's JavaScript; the gallery and expandable sections work directly on GitHub.
+The demo is a browser simulation, not the Windows executable, and still shows the previous design; the Windows app now uses the redesigned interface shown in the gallery. All account operations are simulated and disappear on reset/reload. GitHub READMEs do not execute the demo's JavaScript; the gallery and expandable sections work directly on GitHub.
 
 After cloning the repository, open it locally with:
 
@@ -79,13 +93,16 @@ Start-Process .\demo\index.html
 ## Features
 
 - **Claude / Codex tabs** — keep provider profiles and usage separate.
-- **Themes** — Lavender, Ocean, Sunset, and Graphite, shared across providers.
+- **Ten themes** — Midnight (default), Lavender, Ocean, Sunset, Graphite, Forest, Sakura, Aurora, Daylight and Latte, plus *Match Windows*, which follows the system light/dark setting.
+- **English and Arabic** — the interface mirrors right-to-left for Arabic. It follows the Windows display language until you choose one.
 - **Multiple accounts** — save up to 64 accounts per provider, give them names, and remove them from the island.
 - **Confirmed switching** — review the target account before switching. Selecting the current account shows that it is already logged in.
 - **Automatic usage** — view the 5-hour and weekly quotas, percentage used, and reset countdowns.
-- **Pill or circle** — a draggable circle with an M and a usage ring, plus a separate hover bubble that chooses the available side of the screen.
-- **Independent sizes** — adjust the menu, floating island, and hover bubble separately.
-- **Smooth motion** — animated opening, navigation, and hover, with a Reduce motion option.
+- **Circle by default** — a draggable circle showing the live percentage inside session and weekly rings; choose the 5-hour, weekly or highest value, or show the logo instead. A pill is also available. A separate hover card picks the free side of the screen.
+- **Independent sizes** — adjust the panel, floating island, and hover card separately.
+- **Smooth, sharp rendering** — Direct2D/DirectWrite with anti-aliasing, real transparency and per-monitor DPI; spring animations are paced to the display's refresh rate. Reduce motion makes them immediate.
+- **Tray icon and shortcut** — a live usage ring in the notification area (left-click opens, right-click for a menu), Windows notifications for usage alerts while the panel is closed, and **Ctrl+Alt+M** to open from anywhere. You can hide the floating island and keep only the tray icon.
+- **Start with Windows** — optional, from Settings.
 - **Screen-aware positioning** — the island stays within the monitor's usable area; closing the menu restores the floating position.
 - **In-island controls** — settings, confirmations, and errors appear inside Muisland. Click outside or on the open header to collapse it.
 - **Optional local backups** — create an encrypted checkpoint before switching and recover it to a separate folder.
@@ -168,7 +185,7 @@ See the official [authentication](https://learn.chatgpt.com/docs/auth) and [app-
 
 **+ Add account** creates a temporary draft. Enter a name and choose **Save account** to capture the Claude sign-in. The new entry becomes permanent only after capture succeeds. Back, Cancel, Escape, or closing the island discards an unfinished draft; saving unrelated preferences cannot accidentally keep it. A confirmed save already running is allowed to finish safely.
 
-Use an account card's **adjustments icon** to rename or remove it. Removing an account archives its encrypted snapshot locally; it does not sign Claude out or delete cloud chats.
+Use an account card's **⋯** button to rename or remove it. Removing an account archives its encrypted snapshot locally; it does not sign Claude out or delete cloud chats.
 
 After you confirm, Muisland asks Claude to close normally and waits for it to finish. It does not force-terminate Claude after a timeout. If the tray instance remains open, quit it from its own tray menu and retry. Finish local work before confirming, and let a new sign-in finish loading before Save.
 
@@ -176,35 +193,35 @@ After you confirm, Muisland asks Claude to close normally and waits for it to fi
 
 ## Appearance
 
-Open the header **gear icon** to access Preferences. Choose **Lavender**, **Ocean**, **Sunset**, or **Graphite**, then adjust the three independent sizes:
+Open the header **gear icon** for Settings. Choose a theme (or *Match Windows*), the island style (circle or pill), what the circle shows (percentage or logo, and which usage window), and the language. Three sizes are independent:
 
 | Setting | Range | Controls |
 | --- | --- | --- |
-| Menu size | 75–160% | The expanded menu |
-| Floating island size | 60–180% | The collapsed pill or circle |
-| Hover bubble size | 85–160% | The separate account and usage card |
+| Menu size | 75–160% | The expanded panel |
+| Island size | 60–180% | The collapsed circle or pill |
+| Hover card size | 85–160% | The separate account and usage card |
 
-The hover bubble defaults to 100%, independently of the circle. Shrinking the circle keeps the card readable. Its position and size fit the available monitor space when necessary.
-
-Drag the collapsed island or the open menu's left header to move it. Hovering the circle shows the current account and usage; moving onto the bubble keeps it visible, and clicking it opens the menu. **Reduce motion** disables transitions.
+Sizes are relative to the monitor's scaling, so the island looks the same on 100% and 200% displays. The hover card stays readable when the circle is small, and fits smaller only when the monitor lacks room.
 
 ## Controls and motion
 
 | Interaction | Result |
 | --- | --- |
-| Drag the collapsed pill or circle | Moves the floating island; screen bounds keep it reachable |
-| Hover the circle | Reveals a separate usage bubble with a short eased fade, scale, and slide |
-| Move from circle to bubble | Keeps the card visible, with a short grace period across the gap |
-| Click the circle or bubble | Opens the account menu |
-| Click the open header | Collapses the menu, except for the gear icon |
-| Drag the left header | Moves the open menu |
-| Click outside | Collapses the menu and abandons an unconfirmed action |
-| Press Escape | Returns to the account page from a subpage, or collapses the account menu |
+| Drag the circle or pill | Moves the floating island; the position is remembered and kept on screen |
+| Hover the circle | Reveals the usage card with a spring fade, scale and slide |
+| Click the circle, the card, or press **Ctrl+Alt+M** | Opens the panel |
+| Click the open header | Collapses the panel, except for its buttons |
+| Drag the open header | Moves the panel |
+| Scroll the account list or Settings | Smooth scrolling; Page Up/Down also work |
+| Click outside, or press Escape on the accounts page | Collapses the panel and abandons an unconfirmed action |
+| Press Escape on another page | Goes back |
+| Tab / Shift+Tab, Enter or Space | Moves keyboard focus and activates it |
 | Click an account card | Opens switch confirmation, or reports that it is already logged in |
-| Click an account's adjustments icon | Opens naming and removal controls |
-| Enable Reduce motion | Makes transitions immediate |
+| Click an account's **⋯** button | Renames or removes the account |
+| Tray icon | Left-click opens or closes; right-click offers Settings, Show floating island, Reset position and Quit |
+| Header **tray** button (arrow into a tray) | Minimizes to the tray: collapses the panel and hides the floating island; click the tray icon or press **Ctrl+Alt+M** to restore the island and open the panel. To keep only the tray icon permanently, turn off *Settings → Show floating island* |
 
-The native window uses spring motion for opening and resizing, a short fade for account-page navigation and a directional fade/slide into and out of Preferences, and an eased hover reveal. Menu fitting has its own geometry: opening a larger menu near a corner does not replace the saved floating position. Closing returns the circle or pill to that position.
+The island morphs into the panel with spring physics, pages slide in the direction you navigate, toggles and segmented controls glide, and usage rings ease toward each new reading. Frames are presented on the display's vertical blank; when nothing moves, Muisland sleeps and uses no CPU.
 
 ## Usage and privacy
 
@@ -232,7 +249,7 @@ The usage integration relies on Claude's local storage format and an unofficial 
 
 | Option | What it does |
 | --- | --- |
-| Back up local data before switch | Creates an encrypted checkpoint of ordinary files in the detected Claude app-data folder while Claude is closed. Switching is cancelled if checkpointing fails. |
+| Back up local data before switch (Settings → Safety) | Creates an encrypted checkpoint of ordinary files in the detected Claude app-data folder while Claude is closed. Switching is cancelled if checkpointing fails. |
 | Recover local backup to folder | Decrypts the latest complete checkpoint into a separate folder, without overwriting Claude's live data. |
 | Restore previous sign-in | Restores the authentication backup from the last switch; separate from local-data recovery. |
 
@@ -289,7 +306,7 @@ No. Cloud data stays with its owning account. The local backup option protects o
 <details>
 <summary><strong>The circle is tiny — how do I keep the card readable?</strong></summary>
 
-Preferences has separate **Floating island size** and **Hover bubble size** controls. Start with a small circle and a 100% bubble. The expanded menu also has its own size control. The bubble only fits smaller automatically when the monitor lacks room.
+Settings has separate **Island size** and **Hover card size** controls. Start with a small circle and a 100% card. The expanded panel also has its own size control. The card only fits smaller automatically when the monitor lacks room.
 
 </details>
 
@@ -316,7 +333,9 @@ Tests cover account isolation, confirmation ordering, backup safety, quota parsi
 | --- | --- |
 | `--preview` | Sample accounts and usage, without reading credentials, contacting the usage API, changing Claude, or persisting preferences |
 | `--no-network` | Run with usage requests disabled for that process |
-| `--render-previews <folder>` | Export sample UI renderings without opening a window |
+| `--render-previews <folder>` | Export sample UI renderings (PNG) without opening a window |
+| `--render-motion <folder>` | Export 60 fps animation frames (PNG) using the live springs |
+| `--show` / `--reset-position` | Windows: open the panel, or move the island back to the top of the main screen |
 | `--check-usage` | Windows: read-only Claude usage diagnostic; does not print credentials |
 | `--check-codex-usage` | Windows: read-only Codex quota diagnostic; does not save a profile or print credentials |
 | `--check-env` | Linux: verify installed GUI and crypto dependencies |
@@ -332,18 +351,25 @@ gitleaks git . --redact
 
 | Path | Purpose |
 | --- | --- |
-| `src/main.rs` | Native window, drawing, interaction, and menu state |
+| `src/main.rs` | Entry points and diagnostics |
+| `src/app.rs` | Windows island state, account operations, window and frame loop |
+| `src/ui.rs` | Every screen, drawn immediate-mode with matching hit regions |
+| `src/gfx.rs` | Direct2D/DirectWrite canvas, layered-window surfaces, PNG export |
+| `src/theme.rs` | Themes and usage colours |
+| `src/i18n.rs` | English and Arabic strings |
+| `src/anim.rs` | Springs and easing |
+| `src/system.rs` | Tray icon, notifications, start with Windows |
 | `src/accounts.rs` | Account slots, names, and saved preferences |
 | `src/profiles.rs` | Claude profile snapshots and close/reopen handling |
 | `src/usage.rs` | Account-bound usage requests and quota parsing |
 | `src/codex.rs` | Codex encrypted file profiles and official app-server quota client (Windows) |
 | `linux/backend.py` | Linux encrypted storage, provider operations, backups, and quota clients |
 | `linux/app.py` | GTK/WebKit floating, menu, and hover windows |
-| `linux/island.html` | Linux interface and native-message bridge |
+| `linux/island.html` | Linux interface, native-message bridge, and the browser demo (same design as Windows) |
 | `build.sh` | Linux binary and Debian-package builds |
 | `src/polling.rs` | Refresh timing, retries, and backoff |
 | `src/backup.rs` | Encrypted local checkpoints and separate-folder recovery |
-| `demo/index.html` | Standalone browser playground with sample data |
+| `demo/index.html` | Copy of `linux/island.html` published as the browser demo; a test keeps them identical |
 | `docs/images` | Curated README images and motion preview |
 | `scripts/render-docs.py` | Rebuilds gallery assets from offline app renders |
 
@@ -351,10 +377,11 @@ To regenerate the gallery, install Pillow in your development environment, then 
 
 ```powershell
 .\Muisland.exe --render-previews preview
-python scripts/render-docs.py preview docs/images
+.\Muisland.exe --render-motion motion
+python scripts/render-docs.py preview docs/images motion
 ```
 
-The image generator uses Segoe UI on Windows and falls back to Pillow's bundled font elsewhere. Generated app binaries, the full `target` directory, and scratch previews remain ignored; only the curated documentation assets are tracked.
+The app renders every image itself with sample data; the script only arranges, compresses and animates them. Generated app binaries, the full `target` directory, and scratch previews remain ignored; only the curated documentation assets are tracked.
 
 ## Reporting issues
 
@@ -363,6 +390,6 @@ Include your Windows version, Claude Desktop version, steps to reproduce, and th
 
 ### Usage rings, hover cards and alerts
 
-The floating circle uses an inner session (5-hour for Claude) ring and a blue outer weekly ring. Choose M or a numeric session percentage in Preferences. The hover bubble always shows both usage windows and available reset times; its size stays independent of floating size.
+The floating circle uses an inner session (5-hour for Claude) ring and an outer weekly ring. By default it shows the session percentage; in Settings you can show the weekly or highest value, or the M logo. The tray icon mirrors the same ring. The hover card always shows both usage windows and available reset times; its size stays independent of the island size.
 
-Usage alerts and automatic switching are opt-in. Set separate session and weekly percentages (5–100%). Auto-switch selects a saved, distinct account with recent usage below both limits. It shows a 15-second cancellable countdown inside the Island. Closing the Island cancels it. “Ask first when work may be open” is enabled by default: Claude being open, or Codex sessions whose idle state is unknown, requires confirmation instead of unattended switching. Muisland cannot reliably detect all running projects. Switching may stop tasks; Codex sessions must restart to reload credentials, and chats are not transferred between accounts. Failed/stale quota readings never trigger automatic switching.
+Usage alerts and automatic switching are opt-in. Set separate session and weekly percentages (5–100%). Auto-switch selects a saved, distinct account with recent usage below both limits. It shows a 15-second cancellable countdown inside the Island. While the panel is closed and the tray icon is enabled, alerts also appear as Windows notifications. Closing the Island cancels it. “Ask first when work may be open” is enabled by default: Claude being open, or Codex sessions whose idle state is unknown, requires confirmation instead of unattended switching. Muisland cannot reliably detect all running projects. Switching may stop tasks; Codex sessions must restart to reload credentials, and chats are not transferred between accounts. Failed/stale quota readings never trigger automatic switching.

@@ -83,20 +83,6 @@ impl Window {
         };
         Some(Self { used, resets })
     }
-    pub fn reset_label(&self, now: u64) -> String {
-        match self.resets {
-            None => "Reset time unavailable".into(),
-            Some(t) if t <= now => "Reset due · refresh".into(),
-            Some(t) => {
-                let minutes = (t - now).div_ceil(60);
-                if minutes >= 1440 {
-                    format!("Resets in {}d {}h", minutes / 1440, minutes % 1440 / 60)
-                } else {
-                    format!("Resets in {}h {}m", minutes / 60, minutes % 60)
-                }
-            }
-        }
-    }
     fn cache(&self) -> Value {
         json!({"used":self.used,"resets":self.resets})
     }
@@ -640,14 +626,6 @@ mod tests {
         );
         assert!(parse_time("not-a-date").is_none());
         assert!(parse_time("2026-99-99T12:00:00Z").is_none());
-        assert_eq!(
-            Window {
-                used: 80.,
-                resets: Some(100)
-            }
-            .reset_label(200),
-            "Reset due · refresh"
-        );
     }
     #[test]
     fn credential_selection_cannot_cross_accounts_or_use_wrong_scopes() {

@@ -37,6 +37,17 @@ pub struct Settings {
     pub weekly_threshold: f32,
     pub auto_switch: bool,
     pub pause_for_work: bool,
+    /// 0 English, 1 Arabic.
+    pub language: usize,
+    /// True when no language was ever saved; the system language is used.
+    pub language_unset: bool,
+    /// Island percentage: 0 session, 1 weekly, 2 highest.
+    pub circle_metric: usize,
+    pub tray: bool,
+    pub hotkey: bool,
+    pub show_island: bool,
+    /// Saved floating position (center x, top) in screen pixels.
+    pub position: Option<(f32, i32)>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -51,19 +62,26 @@ impl Default for Settings {
                 .collect(),
             other_accounts: Vec::new(),
             provider: 0,
-            theme: 0,
+            theme: crate::theme::DEFAULT,
             protect_local: false,
             menu_scale: 1.0,
             float_scale: 1.0,
             bubble_scale: 1.0,
-            circle: false,
+            circle: true,
             reduced_motion: false,
-            circle_numbers: false,
+            circle_numbers: true,
             usage_alerts: false,
             session_threshold: 0.8,
             weekly_threshold: 0.8,
             auto_switch: false,
             pause_for_work: true,
+            language: 0,
+            language_unset: true,
+            circle_metric: 0,
+            tray: true,
+            hotkey: true,
+            show_island: true,
+            position: None,
         }
     }
 }
@@ -107,7 +125,11 @@ impl Settings {
             result.other_accounts = codex.accounts;
         }
         result.provider = v["provider"].as_u64().unwrap_or(0).min(1) as usize;
-        result.theme = v["theme"].as_u64().unwrap_or(0).min(3) as usize;
+        result.theme = v["theme"]
+            .as_u64()
+            .map(|t| t as usize)
+            .unwrap_or(crate::theme::DEFAULT)
+            .min(crate::theme::COUNT - 1);
         if result.provider == 1 {
             std::mem::swap(&mut result.accounts, &mut result.other_accounts);
         }
@@ -128,8 +150,32 @@ impl Settings {
             .filter(|n| n.is_finite())
             .unwrap_or(1.0)
             .clamp(0.85, 1.6) as f32;
-        result.circle = v["circle"].as_bool().unwrap_or(false);
-        result.circle_numbers = v["circle_numbers"].as_bool().unwrap_or(false);
+        result.circle = v["circle"].as_bool().unwrap_or(true);
+        result.circle_numbers = v["circle_numbers"].as_bool().unwrap_or(true);
+        // Version 3 introduced the percentage circle as the island; apply it once.
+        if v["version"].as_u64().unwrap_or(0) < 3 {
+            result.circle = true;
+            result.circle_numbers = true;
+        }
+        if let Some(language) = v["language"].as_u64() {
+            result.language = (language as usize).min(1);
+            result.language_unset = false;
+        }
+        result.circle_metric = v["circle_metric"].as_u64().unwrap_or(0).min(2) as usize;
+        result.tray = v["tray"].as_bool().unwrap_or(true);
+        result.hotkey = v["hotkey"].as_bool().unwrap_or(true);
+        result.show_island = v["show_island"].as_bool().unwrap_or(true) || !result.tray;
+        // Version 4: an early minimize-to-tray build saved the island as hidden;
+        // minimizing is now temporary, so bring the island back once.
+        if v["version"].as_u64().unwrap_or(0) < 4 {
+            result.show_island = true;
+        }
+        result.position = match (v["position"][0].as_f64(), v["position"][1].as_i64()) {
+            (Some(x), Some(y)) if x.is_finite() && x.abs() < 1e6 && y.abs() < 1_000_000 => {
+                Some((x as f32, y as i32))
+            }
+            _ => None,
+        };
         result.usage_alerts = v["usage_alerts"].as_bool().unwrap_or(false);
         result.session_threshold = v["session_threshold"]
             .as_f64()
@@ -169,7 +215,7 @@ impl Settings {
         } else {
             (&self.other_accounts, &self.accounts)
         };
-        json!({"version":2,"accounts":rows(claude),"codex_accounts":rows(codex),"provider":self.provider,"theme":self.theme,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion,"circle_numbers":self.circle_numbers,"usage_alerts":self.usage_alerts,"session_threshold":self.session_threshold,"weekly_threshold":self.weekly_threshold,"auto_switch":self.auto_switch,"pause_for_work":self.pause_for_work})
+        json!({"version":4,"accounts":rows(claude),"codex_accounts":rows(codex),"provider":self.provider,"theme":self.theme,"protect_local":self.protect_local,"menu_scale":self.menu_scale,"float_scale":self.float_scale,"bubble_scale":self.bubble_scale,"circle":self.circle,"reduced_motion":self.reduced_motion,"circle_numbers":self.circle_numbers,"usage_alerts":self.usage_alerts,"session_threshold":self.session_threshold,"weekly_threshold":self.weekly_threshold,"auto_switch":self.auto_switch,"pause_for_work":self.pause_for_work,"language":self.language,"circle_metric":self.circle_metric,"tray":self.tray,"hotkey":self.hotkey,"show_island":self.show_island,"position":self.position.map(|(x,y)|json!([x,y]))})
     }
     pub fn select_provider(&mut self, provider: usize) {
         let provider = provider.min(1);
@@ -193,17 +239,6 @@ pub fn valid_name(input: &str) -> io::Result<String> {
     }
     Ok(input.into())
 }
-pub fn age(seconds: u64) -> String {
-    if seconds < 60 {
-        "just now".into()
-    } else if seconds < 3600 {
-        format!("{}m ago", seconds / 60)
-    } else if seconds < 86400 {
-        format!("{}h ago", seconds / 3600)
-    } else {
-        format!("{}d ago", seconds / 86400)
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,7 +250,11 @@ mod tests {
         assert_eq!(settings.accounts[0].name, "شغل");
         assert_eq!(settings.accounts[1].name, "Account 2");
         assert_eq!(settings.menu_scale, 1.0);
-        assert!(!settings.circle);
+        assert!(settings.circle, "the circle is the default island");
+        assert!(
+            settings.circle_numbers,
+            "the circle shows a percentage by default"
+        );
         assert!(!settings.protect_local);
         assert!(settings.accounts[0].usage.is_none());
     }
@@ -294,6 +333,52 @@ mod tests {
         assert_eq!(loaded.theme, 2);
         loaded.select_provider(0);
         assert_eq!(loaded.accounts[0].name, "Claude personal");
+    }
+    #[test]
+    fn new_preferences_roundtrip_and_old_files_keep_working() {
+        let mut settings = Settings::default();
+        settings.language = 1;
+        settings.language_unset = false;
+        settings.circle_metric = 2;
+        settings.tray = false;
+        settings.show_island = false;
+        settings.theme = 9;
+        settings.position = Some((812.5, 40));
+        let loaded = Settings::from_value(&settings.to_value());
+        assert_eq!(loaded.language, 1);
+        assert!(!loaded.language_unset);
+        assert_eq!(loaded.circle_metric, 2);
+        assert!(!loaded.tray);
+        assert!(
+            loaded.show_island,
+            "the island cannot be hidden without a tray icon"
+        );
+        assert_eq!(loaded.theme, 9);
+        assert_eq!(loaded.position, Some((812.5, 40)));
+        let old = Settings::from_value(
+            &json!({"version":2,"theme":3,"circle":false,"circle_numbers":false}),
+        );
+        assert_eq!(old.theme, 3);
+        assert!(
+            old.circle && old.circle_numbers,
+            "upgrades adopt the percentage circle once"
+        );
+        let chosen =
+            Settings::from_value(&json!({"version":3,"circle":false,"circle_numbers":false}));
+        assert!(
+            !chosen.circle && !chosen.circle_numbers,
+            "later choices are respected"
+        );
+        assert!(old.language_unset);
+        let minimized =
+            Settings::from_value(&json!({"version":3,"tray":true,"show_island":false}));
+        assert!(minimized.show_island, "the early tray build's hidden island returns once");
+        let hidden = Settings::from_value(&json!({"version":4,"tray":true,"show_island":false}));
+        assert!(!hidden.show_island, "a deliberate tray-only choice is kept");
+        assert!(Settings::from_value(&json!({"theme":999})).theme < crate::theme::COUNT);
+        assert!(Settings::from_value(&json!({"position":[1e30,5]}))
+            .position
+            .is_none());
     }
     #[test]
     fn names_support_unicode_and_reject_controls() {

@@ -430,7 +430,7 @@ class Shell:
                 s["float_scale"],
             ),
             ("menu", 420, 628, s["menu_scale"]),
-            ("bubble", 306, 206, s["bubble_scale"]),
+            ("bubble", 312, 246, s["bubble_scale"]),
         ]:
             k = min(k, (area.width - 16) / w, (area.height - 16) / h)
             self.scales[role] = k
@@ -664,6 +664,8 @@ class Shell:
         self.fade("menu", True)
         self.windows["menu"].present()
         self.push()
+        # Plays the panel's opening morph and drops half-finished flows.
+        self.eval("menu", "window.nativeOpen&&window.nativeOpen()")
 
     def close_menu(self):
         self.service.usage_alert = None

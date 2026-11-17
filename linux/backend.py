@@ -1010,6 +1010,13 @@ def restore_claude(snapshot, require_identity=True):
             shutil.rmtree(old, ignore_errors=True)
 
 
+# Ten themes plus "match system" (index 10); indices 0-3 keep the original
+# themes, so stored choices survive the redesign. Midnight is the default.
+THEME_COUNT = 11
+THEME_DEFAULT = 4
+SETTINGS_VERSION = 3
+
+
 class Service:
     def __init__(self, preview=False, vault=None, network=True):
         self.preview = preview
@@ -1028,13 +1035,15 @@ class Service:
         self.claude_seen = (None, 0)
         self.settings = {
             "provider": "claude",
-            "theme": 0,
+            "theme": THEME_DEFAULT,
             "menu_scale": 1.0,
             "float_scale": 1.0,
             "bubble_scale": 1.0,
             "circle": True,
             "reduced_motion": False,
-            "circle_numbers": False,
+            "circle_numbers": True,
+            "circle_metric": "session",
+            "language": "auto",
             "usage_alerts": False,
             "session_threshold": 0.8,
             "weekly_threshold": 0.8,
@@ -1042,11 +1051,19 @@ class Service:
             "pause_for_work": True,
             "protect_local": False,
             "position": [100, 80],
+            "settings_version": SETTINGS_VERSION,
             "claude": [],
             "codex": [],
         }
         if not preview and self.vault.exists("settings.bin"):
-            self.settings.update(self.vault.read_json("settings.bin"))
+            stored = self.vault.read_json("settings.bin")
+            self.settings.update(stored)
+            if int(stored.get("settings_version", 0) or 0) < SETTINGS_VERSION:
+                # The redesign makes the circle with a live percentage the
+                # default; apply it once, then respect the user's choice.
+                self.settings["circle"] = True
+                self.settings["circle_numbers"] = True
+                self.settings["settings_version"] = SETTINGS_VERSION
         for obsolete in ("bubble_style", "bubble_density"):
             self.settings.pop(obsolete, None)
         if not preview:
@@ -1480,6 +1497,14 @@ class Service:
                 ):
                     if key in data:
                         self.settings[key] = bool(data[key])
+                for key, allowed in (
+                    ("language", ("auto", "en", "ar")),
+                    ("circle_metric", ("session", "weekly", "max")),
+                ):
+                    if key in data:
+                        if data[key] not in allowed:
+                            raise ValueError("Unsupported setting value")
+                        self.settings[key] = data[key]
                 if any(
                     k in data
                     for k in (
@@ -1492,7 +1517,7 @@ class Service:
                     self.alerted.clear()
                 self.usage_alert = None
                 if "theme" in data:
-                    self.settings["theme"] = int(data["theme"]) % 4
+                    self.settings["theme"] = int(data["theme"]) % THEME_COUNT
                 self.persist()
                 return self.state()
             if action == "add":
