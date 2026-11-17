@@ -287,12 +287,8 @@ fn icon(c: &C, kind: Icon, cx: f32, cy: f32, size: f32, col: Color, spin: f32) {
         }
         Icon::Check => c.polyline(&[p(-6., 0.), p(-2., 4.5), p(6.5, -5.)], w * 1.1, col, false),
         Icon::Expand => c.polyline(&[p(-5., -2.5), p(0., 2.5), p(5., -2.5)], w, col, false),
-        Icon::Tray => {
-            // Arrow dropping into a tray.
-            c.line(p(0., -7.).0, p(0., -7.).1, p(0., 1.5).0, p(0., 1.5).1, w, col);
-            c.polyline(&[p(-3.6, -2.), p(0., 1.8), p(3.6, -2.)], w, col, false);
-            c.polyline(&[p(-7., 2.), p(-7., 6.5), p(7., 6.5), p(7., 2.)], w, col, false);
-        }
+        // Minimize: a single bar, as in a window title bar.
+        Icon::Tray => c.line(p(-5.5, 1.).0, p(-5.5, 1.).1, p(5.5, 1.).0, p(5.5, 1.).1, w * 1.1, col),
     }
 }
 /// The Muisland "M" mark.
@@ -930,7 +926,7 @@ fn draw_panel(c: &mut C, s: &State, m: &mut Mem) {
         c,
         s,
         m,
-        r(PW - 130., 13., 34., 34.),
+        r(PW - 90., 13., 34., 34.),
         Action::ToTray,
         Icon::Tray,
         0.,
@@ -940,7 +936,7 @@ fn draw_panel(c: &mut C, s: &State, m: &mut Mem) {
         c,
         s,
         m,
-        r(PW - 90., 13., 34., 34.),
+        r(PW - 130., 13., 34., 34.),
         Action::Preferences,
         Icon::Gear,
         spin * TAU / 8.,
@@ -1519,8 +1515,16 @@ fn account_card(c: &mut C, s: &State, m: &mut Mem, i: usize, b: R) {
         t.text,
         Align::Start,
     );
+    let duplicate = if a.draft || s.preview {
+        None
+    } else {
+        s.duplicate_of(i)
+    };
     let sub = if a.draft {
         s.tr("Draft · enter a name, then save").to_string()
+    } else if let Some(j) = duplicate {
+        s.tr("Same account as {name}")
+            .replace("{name}", &s.settings.accounts[j].name)
     } else if s.preview {
         if active {
             s.tr("Active · sample data").into()
@@ -1548,7 +1552,9 @@ fn account_card(c: &mut C, s: &State, m: &mut Mem, i: usize, b: R) {
         &sub,
         r(text_x, b.y + 37., text_w, 17.),
         font(12., 450),
-        if active {
+        if duplicate.is_some() {
+            t.warn
+        } else if active {
             t.good.mix(t.muted, 0.25)
         } else {
             t.muted
@@ -2111,18 +2117,6 @@ fn preferences(c: &mut C, s: &State, m: &mut Mem) {
     );
     row(Action::Quit, y, 42., &mut rows);
     y += 52.;
-    c.text(
-        &format!(
-            "Muisland {} · {}",
-            env!("CARGO_PKG_VERSION"),
-            s.tr("Unofficial · not affiliated with Anthropic or OpenAI")
-        ),
-        r(PAD, y, PW - 2. * PAD, 18.),
-        font(11., 400),
-        t.muted.alpha(0.8),
-        Align::Center,
-    );
-    y += 30.;
     m.finish_scroll(1, y - start - region.h);
     m.rows[1] = rows;
     reveal(m, 1, region.h);

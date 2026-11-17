@@ -47,6 +47,12 @@ pub fn account_identity(slot: usize) -> io::Result<String> {
 pub fn saved(slot: usize) -> bool {
     snapshot(slot).is_ok_and(|p| p.is_file())
 }
+/// Another saved slot holding this Codex account, if any.
+pub fn slot_holding(identity: &str, except: usize) -> Option<usize> {
+    (1..=accounts::MAX_ACCOUNTS)
+        .filter(|slot| *slot != except && saved(*slot))
+        .find(|slot| account_identity(*slot).ok().as_deref() == Some(identity))
+}
 pub fn is_current(slot: usize) -> bool {
     account_identity(slot)
         .ok()

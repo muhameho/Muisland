@@ -1815,7 +1815,7 @@
           h += `<div class="row"><div class="lbl"><b>${tr("Back up local data before switch")}</b><small>${tr("Encrypted checkpoint while Claude is closed")}</small></div>${toggle("protect_local")}</div>`;
         h += `<button class="btn wide" data-op="rollback">${tr("Restore previous sign-in")}</button>`;
         if (data.provider === "claude") h += `<button class="btn wide" data-op="recover">${tr("Recover local backup to folder")}</button>`;
-        h += `<button class="btn wide danger" data-quit>${tr("Quit Muisland")}</button><p class="about">Muisland${data.version ? " " + esc(data.version) : ""} · ${tr("Unofficial · not affiliated with Anthropic or OpenAI")}</p>`;
+        h += `<button class="btn wide danger" data-quit>${tr("Quit Muisland")}</button>`;
         return head(tr("Settings"), true) + `<div class="scroll" data-key="scroll-settings">${h}</div>`;
       }
       function editPage() {

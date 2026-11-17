@@ -123,6 +123,8 @@ fn arabic(en: &str) -> Option<&'static str> {
         "Close Muisland" => "إغلاق Muisland",
         "Show floating island" => "إظهار الجزيرة العائمة",
         "Minimize to tray" => "تصغير إلى منطقة الإشعارات",
+        "Same account as {name}" => "نفس حساب {name}",
+        "This Codex account is already saved as {name}. Sign in to a different account in Codex, then choose Save again." => "حساب Codex هذا محفوظ بالفعل باسم {name}. سجّل الدخول إلى حساب آخر في Codex، ثم اختر حفظ مرة أخرى.",
         "When off, Muisland stays in the tray" => "عند الإيقاف يبقى Muisland في منطقة الإشعارات",
         "Muisland is in the tray" => "Muisland في منطقة الإشعارات",
         "Click its icon or press Ctrl+Alt+M to open it." => "انقر أيقونته أو اضغط Ctrl+Alt+M لفتحه.",

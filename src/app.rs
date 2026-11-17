@@ -211,6 +211,15 @@ pub struct State {
     taskbar_created: u32,
 }
 impl State {
+    /// Another saved entry that holds the same signed-in account, if any.
+    pub fn duplicate_of(&self, i: usize) -> Option<usize> {
+        let id = self.identities.get(i)?.as_ref()?;
+        self.identities
+            .iter()
+            .enumerate()
+            .find(|(j, other)| *j != i && other.as_ref() == Some(id))
+            .map(|(j, _)| j)
+    }
     /// Whether the floating circle or pill is shown while the panel is closed.
     pub fn island_visible(&self) -> bool {
         self.settings.show_island && !self.in_tray
@@ -689,6 +698,12 @@ pub fn begin(s: &mut State, op: Op, confirmed: bool) {
         Op::Save(i) | Op::Switch(i) => s.settings.accounts[i].slot,
         _ => 0,
     };
+    let names: Vec<(usize, String)> = s
+        .settings
+        .accounts
+        .iter()
+        .map(|a| (a.slot, a.name.clone()))
+        .collect();
     let (tx, rx) = mpsc::channel();
     s.worker = Some(rx);
     s.pending = Some(op);
@@ -742,6 +757,21 @@ pub fn begin(s: &mut State, op: Op, confirmed: bool) {
                 ));
             }
             if provider == 1 {
+                // Codex cannot be sent to a sign-in screen from here, so saving an
+                // account that another entry already holds would only duplicate it.
+                if matches!(op, Op::Save(_)) {
+                    if let Some(other) = codex::current_identity()
+                        .ok()
+                        .and_then(|id| codex::slot_holding(&id, slot))
+                    {
+                        let name = names
+                            .iter()
+                            .find(|(s, _)| *s == other)
+                            .map(|(_, n)| n.clone())
+                            .unwrap_or_else(|| tr("another account"));
+                        return Err(tr("This Codex account is already saved as {name}. Sign in to a different account in Codex, then choose Save again.").replace("{name}", &name));
+                    }
+                }
                 match op {
                     Op::Save(_) => codex::save(slot),
                     Op::Switch(_) => codex::switch(slot),
@@ -3322,6 +3352,16 @@ mod tests {
         assert_eq!(hit(&s, x, y), Action::Toggle);
         let (x, y) = center_of(&s, Action::ToTray);
         assert_eq!(hit(&s, x, y), Action::ToTray);
+    }
+    #[test]
+    fn entries_holding_the_same_account_are_flagged() {
+        let mut s = initial(true, 0., 0);
+        s.identities = vec![Some("a".into()), Some("a".into()), Some("b".into())];
+        assert_eq!(s.duplicate_of(0), Some(1));
+        assert_eq!(s.duplicate_of(1), Some(0));
+        assert_eq!(s.duplicate_of(2), None);
+        s.identities[1] = None;
+        assert_eq!(s.duplicate_of(0), None);
     }
     #[test]
     fn minimize_to_tray_hides_island_and_keeps_a_way_back() {
